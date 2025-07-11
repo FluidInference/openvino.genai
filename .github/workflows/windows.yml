@@ -68,13 +68,6 @@ jobs:
       #   run: |
       #     pip install (Get-ChildItem dist/*.whl)
 
-      - name: Build samples
-        run: |
-          if (Test-Path "samples") {
-            cmake -B samples_build -S samples -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -G "Visual Studio 17 2022" -A x64
-            cmake --build samples_build --config ${{ matrix.build_type }} --parallel
-          }
-
       - name: Test basic functionality
         run: |
           if (Test-Path "tests/python_tests/test_tokenizer.py") {

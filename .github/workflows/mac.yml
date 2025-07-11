@@ -57,13 +57,6 @@ jobs:
         run: |
           cmake --install build --config ${{ matrix.build_type }} --prefix install
 
-      - name: Build samples
-        run: |
-          if [ -d "samples" ]; then
-            cmake -B samples_build -S samples -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-            cmake --build samples_build --config ${{ matrix.build_type }} --parallel
-          fi
-
       - name: Test basic functionality
         run: |
           if [ -f "tests/python_tests/test_tokenizer.py" ]; then
