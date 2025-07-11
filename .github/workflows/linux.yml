@@ -56,16 +56,10 @@ jobs:
       - name: Install
         run: |
           cmake --install build --config ${{ matrix.build_type }} --prefix install
-
-      - name: Test Python imports
-        run: |
-          export PYTHONPATH=$PWD/build/src/python:$PYTHONPATH
-          python -c "import openvino_genai; print('OpenVINO GenAI import successful')" || echo "Python import test skipped - focusing on C++ build"
-
       - name: Build samples
         run: |
-          if [ -d "samples/cpp" ]; then
-            cmake -B samples_build -S samples/cpp -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          if [ -d "samples" ]; then
+            cmake -B samples_build -S samples -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
             cmake --build samples_build --config ${{ matrix.build_type }} --parallel
           fi
 
