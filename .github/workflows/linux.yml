@@ -66,9 +66,11 @@ jobs:
           # Use hardcoded nightly version
           NIGHTLY_VERSION="2025.3.0-19447-f52861cec1e"
           LINUX_TGZ="openvino_toolkit_ubuntu22_2025.3.0.dev20250708_x86_64.tgz"
+          # Use PEP 440 compliant version for wheel building
+          OV_WHEEL_VERSION="2025.3.0.dev20250708"
 
           echo "Using hardcoded nightly version: $NIGHTLY_VERSION"
-          echo "ov_version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
+          echo "ov_version=$OV_WHEEL_VERSION" >> $GITHUB_OUTPUT
 
           echo "Using Linux package: $LINUX_TGZ"
 
