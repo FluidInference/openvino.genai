@@ -6,7 +6,7 @@ on:
   push:
     branches:
       - master
-      - 'releases/**'
+      - "releases/**"
 
 permissions: read-all
 
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: "3.11"
 
 jobs:
   sdl_tests:
@@ -39,18 +39,18 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: "pip"
 
       - name: Install Python tests dependencies
         run: |
           python3 -m pip install flake8 pytest black bandit
-          
+
       - name: Lint with flake8 (WWB)
         run: |
           # stop the build if there are Python syntax errors or undefined names
           python -m flake8 . --config=./setup.cfg
         working-directory: ${{ github.workspace }}/tools/who_what_benchmark
-          
+
       - name: Lint with flake8 (LLM)
         run: |
           # stop the build if there are Python syntax errors or undefined names
@@ -63,12 +63,13 @@ jobs:
       - name: Run Trivy vulnerability scanner in fs mode
         uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
+          scan-type: "fs"
+          scan-ref: "."
 
-      - name: Dependency Review
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/dependency-review-action@da24556b548a50705dd671f47852072ea4c105d9 # v4.7.1
-        with:
-          config-file: './.github/dependency_review.yml'
-
+      # Dependency Review requires GitHub Advanced Security on private repos
+      # Commenting out since this is a private repo without Advanced Security
+      # - name: Dependency Review
+      #   if: ${{ github.event_name == 'pull_request' }}
+      #   uses: actions/dependency-review-action@da24556b548a50705dd671f47852072ea4c105d9 # v4.7.1
+      #   with:
+      #     config-file: './.github/dependency_review.yml'
