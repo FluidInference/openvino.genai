@@ -58,35 +58,17 @@ jobs:
       - name: Download OpenVINO Developer Package
         id: openvino_download
         run: |
-          # Get latest nightly version info
-          echo "Getting latest nightly OpenVINO version..."
+          # Use hardcoded nightly version
+          NIGHTLY_VERSION="2025.3.0-19447-f52861cec1e"
+          MACOS_TGZ="openvino_toolkit_macos_12_6_2025.3.0.dev20250708_x86_64.tgz"
 
-          # Get version from filetree.json API
-          NIGHTLY_VERSION=$(curl -s https://storage.openvinotoolkit.org/filetree.json | jq -r '.children[] | select(.name == "repositories") | .children[] | select(.name == "openvino") | .children[] | select(.name == "packages") | .children[] | select(.name == "nightly") | .children[] | select(.type == "directory") | .name' | sort -V | tail -1)
-
-          if [ -z "$NIGHTLY_VERSION" ]; then
-            echo "Error: Could not determine nightly version"
-            exit 1
-          fi
-
-          echo "Using nightly version: $NIGHTLY_VERSION"
+          echo "Using hardcoded nightly version: $NIGHTLY_VERSION"
           echo "ov_version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
 
-          # Get macOS package list for this version
-          MACOS_PACKAGES=$(curl -s https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/macos/)
-
-          # Find the macOS x86_64 tgz file
-          MACOS_TGZ=$(echo "$MACOS_PACKAGES" | grep -oE 'm_openvino_toolkit_macos_[^"]+_x86_64\.tgz' | head -1)
-
-          if [ -z "$MACOS_TGZ" ]; then
-            echo "Error: Could not find macOS x86_64 package for version $NIGHTLY_VERSION"
-            exit 1
-          fi
-
-          echo "Found macOS package: $MACOS_TGZ"
+          echo "Using macOS package: $MACOS_TGZ"
 
           # Download OpenVINO developer package for macOS
-          DOWNLOAD_URL="https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/macos/$MACOS_TGZ"
+          DOWNLOAD_URL="https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/$MACOS_TGZ"
           echo "Downloading from: $DOWNLOAD_URL"
           wget -q "$DOWNLOAD_URL" -O openvino_dev.tgz
 

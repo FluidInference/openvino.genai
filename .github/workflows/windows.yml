@@ -62,53 +62,17 @@ jobs:
       - name: Download OpenVINO Developer Package
         id: openvino_download
         run: |
-          # Get latest nightly version info
-          echo "Getting latest nightly OpenVINO version..."
+          # Use hardcoded nightly version
+          NIGHTLY_VERSION="2025.3.0-19447-f52861cec1e"
+          WINDOWS_ZIP="openvino_toolkit_windows_2025.3.0.dev20250708_x86_64.zip"
 
-          # Get version from filetree.json API
-          NIGHTLY_VERSION=$(curl -s https://storage.openvinotoolkit.org/filetree.json | jq -r '.children[] | select(.name == "repositories") | .children[] | select(.name == "openvino") | .children[] | select(.name == "packages") | .children[] | select(.name == "nightly") | .children[] | select(.type == "directory") | .name' | sort -V | tail -1)
-
-          if [ -z "$NIGHTLY_VERSION" ]; then
-            echo "Error: Could not determine nightly version"
-            exit 1
-          fi
-
-          echo "Using nightly version: $NIGHTLY_VERSION"
+          echo "Using hardcoded nightly version: $NIGHTLY_VERSION"
           echo "ov_version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
 
-          # Get Windows package info from filetree.json API
-          echo "Getting Windows packages for version: $NIGHTLY_VERSION"
-          WINDOWS_ZIP=$(curl -s https://storage.openvinotoolkit.org/filetree.json | jq -r --arg version "$NIGHTLY_VERSION" '
-            .children[] | select(.name == "repositories") | 
-            .children[] | select(.name == "openvino") | 
-            .children[] | select(.name == "packages") | 
-            .children[] | select(.name == "nightly") | 
-            .children[] | select(.name == $version) | 
-            .children[] | select(.name == "windows") | 
-            .children[] | select(.type == "file" and (.name | test("^w_openvino_toolkit_windows_.*_x86_64\\.zip$"))) | 
-            .name
-          ')
-
-          if [ -z "$WINDOWS_ZIP" ]; then
-            echo "Error: Could not find Windows x86_64 package for version $NIGHTLY_VERSION"
-            echo "Available Windows packages:"
-            curl -s https://storage.openvinotoolkit.org/filetree.json | jq -r --arg version "$NIGHTLY_VERSION" '
-              .children[] | select(.name == "repositories") | 
-              .children[] | select(.name == "openvino") | 
-              .children[] | select(.name == "packages") | 
-              .children[] | select(.name == "nightly") | 
-              .children[] | select(.name == $version) | 
-              .children[] | select(.name == "windows") | 
-              .children[] | select(.type == "file") | 
-              .name
-            '
-            exit 1
-          fi
-
-          echo "Found Windows package: $WINDOWS_ZIP"
+          echo "Using Windows package: $WINDOWS_ZIP"
 
           # Download OpenVINO developer package for Windows
-          DOWNLOAD_URL="https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/windows/$WINDOWS_ZIP"
+          DOWNLOAD_URL="https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/$WINDOWS_ZIP"
           echo "Downloading from: $DOWNLOAD_URL"
           wget -q "$DOWNLOAD_URL" -O openvino_dev.zip
 

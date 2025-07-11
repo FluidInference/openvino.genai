@@ -63,35 +63,17 @@ jobs:
       - name: Download OpenVINO Developer Package
         id: openvino_download
         run: |
-          # Get latest nightly version info
-          echo "Getting latest nightly OpenVINO version..."
+          # Use hardcoded nightly version
+          NIGHTLY_VERSION="2025.3.0-19447-f52861cec1e"
+          LINUX_TGZ="openvino_toolkit_ubuntu22_2025.3.0.dev20250708_x86_64.tgz"
 
-          # Get version from filetree.json API
-          NIGHTLY_VERSION=$(curl -s https://storage.openvinotoolkit.org/filetree.json | jq -r '.children[] | select(.name == "repositories") | .children[] | select(.name == "openvino") | .children[] | select(.name == "packages") | .children[] | select(.name == "nightly") | .children[] | select(.type == "directory") | .name' | sort -V | tail -1)
-
-          if [ -z "$NIGHTLY_VERSION" ]; then
-            echo "Error: Could not determine nightly version"
-            exit 1
-          fi
-
-          echo "Using nightly version: $NIGHTLY_VERSION"
+          echo "Using hardcoded nightly version: $NIGHTLY_VERSION"
           echo "ov_version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
 
-          # Get Linux package list for this version
-          LINUX_PACKAGES=$(curl -s https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/linux/)
-
-          # Find the Linux Ubuntu 22 x86_64 tgz file
-          LINUX_TGZ=$(echo "$LINUX_PACKAGES" | grep -oE 'l_openvino_toolkit_ubuntu22_[^"]+_x86_64\.tgz' | head -1)
-
-          if [ -z "$LINUX_TGZ" ]; then
-            echo "Error: Could not find Linux Ubuntu 22 x86_64 package for version $NIGHTLY_VERSION"
-            exit 1
-          fi
-
-          echo "Found Linux package: $LINUX_TGZ"
+          echo "Using Linux package: $LINUX_TGZ"
 
           # Download OpenVINO developer package
-          DOWNLOAD_URL="https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/linux/$LINUX_TGZ"
+          DOWNLOAD_URL="https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/$LINUX_TGZ"
           echo "Downloading from: $DOWNLOAD_URL"
           wget -q "$DOWNLOAD_URL" -O openvino_dev.tgz
 
