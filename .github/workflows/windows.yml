@@ -64,17 +64,9 @@ jobs:
         run: |
           # Get latest nightly version info
           echo "Getting latest nightly OpenVINO version..."
-          LATEST_INFO=$(curl -s https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/latest/)
 
-          # Extract version from the response (assuming it contains version info)
-          # The latest endpoint typically contains links or version info
-          NIGHTLY_VERSION=$(echo "$LATEST_INFO" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-
-          if [ -z "$NIGHTLY_VERSION" ]; then
-            echo "Could not determine nightly version, falling back to directory listing approach"
-            # Alternative: get version from directory listing
-            NIGHTLY_VERSION=$(curl -s https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/ | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1)
-          fi
+          # Get version from filetree.json API
+          NIGHTLY_VERSION=$(curl -s https://storage.openvinotoolkit.org/filetree.json | jq -r '.children[] | select(.name == "repositories") | .children[] | select(.name == "openvino") | .children[] | select(.name == "packages") | .children[] | select(.name == "nightly") | .children[] | select(.type == "directory") | .name' | sort -V | tail -1)
 
           if [ -z "$NIGHTLY_VERSION" ]; then
             echo "Error: Could not determine nightly version"
@@ -392,45 +384,6 @@ jobs:
         with:
           name: genai_wheels
           path: ${{ env.INSTALL_DIR }}
-          if-no-files-found: "error"
-
-  store_artifacts:
-    name: Store build artifacts
-    strategy:
-      matrix:
-        build-type: [Release]
-    needs: [openvino_download, genai_build_wheel, genai_build_cpack]
-    timeout-minutes: 10
-    defaults:
-      run:
-        shell: bash
-    runs-on: ubuntu-latest
-    env:
-      WHEEL_PACKAGE: ${{ github.workspace }}/wheels
-      MANIFEST_PATH: ${{ github.workspace }}/manifest.yml
-
-    steps:
-      - name: Download genai package
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: ${{ env.GENAI_ARCHIVE_ARTIFACT_BASE_NAME }}_${{ matrix.build-type }}
-          path: ${{ github.workspace }}
-
-      - name: Download manifest and wheels
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: "{${{ env.GENAI_WHEELS_ARTIFACT_NAME }},manifest_${{ matrix.build-type }}}"
-          path: ${{ github.workspace }}
-          merge-multiple: true
-
-      - name: Store artifacts as GitHub artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: stored_artifacts_${{ matrix.build-type }}
-          path: |
-            ${{ github.workspace }}/${{ env.GENAI_ARCHIVE_ARTIFACT_BASE_NAME }}.zip
-            ${{ env.WHEEL_PACKAGE }}
-            ${{ env.MANIFEST_PATH }}
           if-no-files-found: "error"
 
   genai_build_samples:

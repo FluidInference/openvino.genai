@@ -6,7 +6,7 @@ on:
   push:
     branches:
       - master
-      - 'releases/**'
+      - "releases/**"
 
 permissions: read-all
 
@@ -16,14 +16,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MACOSX_DEPLOYMENT_TARGET: '11.0'
-  PYTHON_VERSION: '3.10'
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+  PYTHON_VERSION: "3.10"
   TARGET_BRANCH: ${{ github.base_ref || github.event.merge_group.base_ref || github.ref }}
   BASE_PRODUCT_TYPE: public_darwin
   CCACHE_MAXSIZE: 500Mi
   HF_HOME: ~/.cache/hf
   OV_CACHE: ~/.cache/ov_cache
-  OPENVINO_VERSION: '2024.6.0'
 
 jobs:
   smart_ci:
@@ -46,9 +45,9 @@ jobs:
     name: Download OpenVINO
     outputs:
       status: ${{ steps.openvino_download.outcome }}
-      ov_artifact_name: 'openvino_package'
-      ov_wheel_source: 'openvino==${{ env.OPENVINO_VERSION }}'
-      ov_version: ${{ env.OPENVINO_VERSION }}
+      ov_artifact_name: "openvino_package"
+      ov_wheel_source: "openvino==${{ steps.openvino_download.outputs.ov_version }}"
+      ov_version: ${{ steps.openvino_download.outputs.ov_version }}
     timeout-minutes: 10
     defaults:
       run:
@@ -56,28 +55,57 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Download OpenVINO Developer Package
-      id: openvino_download
-      run: |
-        # Download OpenVINO developer package for macOS
-        wget -q https://storage.openvinotoolkit.org/repositories/openvino/packages/2024.6/macos/m_openvino_toolkit_macos_12_6_2024.6.0_16993_24ac91d0c1b_x86_64.tgz -O openvino_dev.tgz
-        
-        # Create directory structure
-        mkdir -p openvino_package
-        tar -xzf openvino_dev.tgz -C openvino_package --strip-components=1
-        
-        # Download Node.js package (simplified)
-        mkdir -p openvino_package/openvino_node_npm_package
-        echo "Node.js package placeholder" > openvino_package/openvino_node_npm_package/placeholder.txt
-        
-        echo "outcome=success" >> $GITHUB_OUTPUT
+      - name: Download OpenVINO Developer Package
+        id: openvino_download
+        run: |
+          # Get latest nightly version info
+          echo "Getting latest nightly OpenVINO version..."
 
-    - name: Upload OpenVINO Package
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-      with:
-        name: openvino_package
-        path: openvino_package/
-        if-no-files-found: 'error'
+          # Get version from filetree.json API
+          NIGHTLY_VERSION=$(curl -s https://storage.openvinotoolkit.org/filetree.json | jq -r '.children[] | select(.name == "repositories") | .children[] | select(.name == "openvino") | .children[] | select(.name == "packages") | .children[] | select(.name == "nightly") | .children[] | select(.type == "directory") | .name' | sort -V | tail -1)
+
+          if [ -z "$NIGHTLY_VERSION" ]; then
+            echo "Error: Could not determine nightly version"
+            exit 1
+          fi
+
+          echo "Using nightly version: $NIGHTLY_VERSION"
+          echo "ov_version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
+
+          # Get macOS package list for this version
+          MACOS_PACKAGES=$(curl -s https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/macos/)
+
+          # Find the macOS x86_64 tgz file
+          MACOS_TGZ=$(echo "$MACOS_PACKAGES" | grep -oE 'm_openvino_toolkit_macos_[^"]+_x86_64\.tgz' | head -1)
+
+          if [ -z "$MACOS_TGZ" ]; then
+            echo "Error: Could not find macOS x86_64 package for version $NIGHTLY_VERSION"
+            exit 1
+          fi
+
+          echo "Found macOS package: $MACOS_TGZ"
+
+          # Download OpenVINO developer package for macOS
+          DOWNLOAD_URL="https://storage.openvinotoolkit.org/repositories/openvino/packages/nightly/$NIGHTLY_VERSION/macos/$MACOS_TGZ"
+          echo "Downloading from: $DOWNLOAD_URL"
+          wget -q "$DOWNLOAD_URL" -O openvino_dev.tgz
+
+          # Create directory structure
+          mkdir -p openvino_package
+          tar -xzf openvino_dev.tgz -C openvino_package --strip-components=1
+
+          # Download Node.js package (simplified)
+          mkdir -p openvino_package/openvino_node_npm_package
+          echo "Node.js package placeholder" > openvino_package/openvino_node_npm_package/placeholder.txt
+
+          echo "outcome=success" >> $GITHUB_OUTPUT
+
+      - name: Upload OpenVINO Package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: openvino_package
+          path: openvino_package/
+          if-no-files-found: "error"
 
   genai_build_cmake:
     name: Build cpack - ${{ matrix.build-type }}
@@ -85,7 +113,7 @@ jobs:
       fail-fast: false
       matrix:
         build-type: [Release]
-    needs: [ openvino_download ]
+    needs: [openvino_download]
     timeout-minutes: 45
     defaults:
       run:
@@ -122,7 +150,7 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: "pip"
 
       - name: Install build dependencies
         run: brew install coreutils ccache ninja
@@ -135,7 +163,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-ccache-${{ env.TARGET_BRANCH }}-${{ matrix.build-type }}-cpack
           path: ${{ env.CCACHE_DIR }}
-        
+
       - name: Generate product manifest
         run: |
           echo "product_type: ${{ env.BASE_PRODUCT_TYPE }}_${{ matrix.build-type }}" > ${{ env.MANIFEST_PATH }}
@@ -144,7 +172,7 @@ jobs:
 
       - name: Clean ccache stats
         run: ccache --zero-stats --show-config
-          
+
       - name: CMake Build
         run: |
           source ${{ env.OV_INSTALL_DIR }}/setupvars.sh
@@ -173,7 +201,7 @@ jobs:
         with:
           name: genai_cpack_${{ matrix.build-type }}
           path: ${{ env.INSTALL_DIR }}
-          if-no-files-found: 'error'
+          if-no-files-found: "error"
 
       - name: Upload Tools
         if: always()
@@ -181,7 +209,7 @@ jobs:
         with:
           name: genai_tools_${{ matrix.build-type }}
           path: ${{ env.INSTALL_TOOLS_DIR }}
-          if-no-files-found: 'error'
+          if-no-files-found: "error"
 
       - name: Upload Tests
         if: always()
@@ -189,19 +217,19 @@ jobs:
         with:
           name: genai_tests_${{ matrix.build-type }}
           path: ${{ env.INSTALL_TESTS_DIR }}
-          if-no-files-found: 'error'
-          
+          if-no-files-found: "error"
+
       - name: Upload manifest
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: manifest_${{ matrix.build-type }}
           path: ${{ env.MANIFEST_PATH }}
-          if-no-files-found: 'error'
+          if-no-files-found: "error"
 
   genai_build_wheel:
     name: Build Wheel
-    needs: [ openvino_download ]
+    needs: [openvino_download]
     timeout-minutes: 45
     defaults:
       run:
@@ -235,7 +263,7 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: "pip"
 
       - name: Install build dependencies
         run: brew install coreutils ccache
@@ -248,7 +276,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-ccache-${{ env.TARGET_BRANCH }}-wheel
           path: ${{ env.CCACHE_DIR }}\
-          
+
       - name: Set CI environment
         run: |
           echo "Setting up environment for wheel build"
@@ -288,7 +316,7 @@ jobs:
         with:
           name: genai_wheels
           path: ${{ env.INSTALL_DIR }}
-          if-no-files-found: 'error'
+          if-no-files-found: "error"
 
   genai_build_samples:
     name: Build Samples - ${{ matrix.build-type }}
@@ -296,7 +324,7 @@ jobs:
       fail-fast: false
       matrix:
         build-type: [Release]
-    needs: [ openvino_download, genai_build_cmake ]
+    needs: [openvino_download, genai_build_cmake]
     timeout-minutes: 10
     defaults:
       run:
@@ -344,7 +372,7 @@ jobs:
         with:
           name: genai_samples_${{ matrix.build-type }}
           path: ${{ env.INSTALL_DIR }}
-          if-no-files-found: 'error'
+          if-no-files-found: "error"
 
   genai_build_nodejs:
     name: Build Node.js bindings
@@ -352,7 +380,7 @@ jobs:
       fail-fast: false
       matrix:
         build-type: [Release]
-    needs: [ openvino_download ]
+    needs: [openvino_download]
     timeout-minutes: 30
     defaults:
       run:
@@ -398,39 +426,39 @@ jobs:
         with:
           name: genai_nodejs_bindings
           path: ${{ env.INSTALL_DIR }}
-          if-no-files-found: 'error'
+          if-no-files-found: "error"
 
   genai_tests_wheel:
     name: Python (${{ matrix.test.name}}) Tests (wheel)
-    needs: [ smart_ci, openvino_download, genai_build_wheel ]
+    needs: [smart_ci, openvino_download, genai_build_wheel]
     timeout-minutes: ${{ matrix.test.timeout }}
     strategy:
       fail-fast: false
       matrix:
         test:
-          - name: 'Whisper'
+          - name: "Whisper"
             # TODO: skip some tests temporary untill https://github.com/huggingface/datasets/issues/7647 dataset is fixed
             cmd: 'tests/python_tests/test_whisper_pipeline.py -k "not test_smoke[sample_from_dataset0 and not test_whisper_constructors[sample_from_dataset0 and not test_max_new_tokens[sample_from_dataset0 and not test_language_mode[language and not test_task_mode[sample_from_dataset0 and not test_language_autodetect[sample_from_dataset0 and not test_whisper_config_constructor and not test_language_autodetect[sample_from_dataset1 and not test_language_autodetect[sample_from_dataset2 and not test_initial_prompt_hotwords[sample_from_dataset0 and not test_random_sampling[sample_from_dataset0"'
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).whisper.test }}
             timeout: 45
-          - name: 'Cacheopt E2E'
-            cmd: 'tests/python_tests/test_kv_cache_eviction.py'
+          - name: "Cacheopt E2E"
+            cmd: "tests/python_tests/test_kv_cache_eviction.py"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).continuous_batching.test }}
             timeout: 60
-          - name: 'LLM & VLM'
-            cmd: 'tests/python_tests/test_llm_pipeline.py tests/python_tests/test_llm_pipeline_static.py tests/python_tests/test_vlm_pipeline.py tests/python_tests/test_structured_output.py'
+          - name: "LLM & VLM"
+            cmd: "tests/python_tests/test_llm_pipeline.py tests/python_tests/test_llm_pipeline_static.py tests/python_tests/test_vlm_pipeline.py tests/python_tests/test_structured_output.py"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).visual_language.test || fromJSON(needs.smart_ci.outputs.affected_components).LLM.test }}
             timeout: 120
-          - name: 'Tokenizer tests'
-            cmd: 'tests/python_tests/test_tokenizer.py'
+          - name: "Tokenizer tests"
+            cmd: "tests/python_tests/test_tokenizer.py"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).tokenizers.test }}
             timeout: 60
-          - name: 'API tests'
-            cmd: 'tests/python_tests/test_continuous_batching.py tests/python_tests/test_generation_config.py tests/python_tests/test_sampling.py tests/python_tests/test_text_streamer.py'
+          - name: "API tests"
+            cmd: "tests/python_tests/test_continuous_batching.py tests/python_tests/test_generation_config.py tests/python_tests/test_sampling.py tests/python_tests/test_text_streamer.py"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).continuous_batching.test || fromJSON(needs.smart_ci.outputs.affected_components).sampling.test || fromJSON(needs.smart_ci.outputs.affected_components).text_streamer.test }}
             timeout: 60
-          - name: 'Rag tests'
-            cmd: 'tests/python_tests/test_rag.py'
+          - name: "Rag tests"
+            cmd: "tests/python_tests/test_rag.py"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).RAG.test }}
             timeout: 30
     defaults:
@@ -464,7 +492,7 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: "pip"
 
       - name: Install OpenVINO wheel
         if: ${{ matrix.test.run_condition }}
@@ -491,24 +519,32 @@ jobs:
       matrix:
         build-type: [Release]
         test:
-          - name: 'LLM'
-            marker: 'llm'
-            cmd: 'tests/python_tests/samples'
+          - name: "LLM"
+            marker: "llm"
+            cmd: "tests/python_tests/samples"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).LLM_samples.test }}
-          - name: 'Whisper'
-            marker: 'whisper'
-            cmd: 'tests/python_tests/samples'
+          - name: "Whisper"
+            marker: "whisper"
+            cmd: "tests/python_tests/samples"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).Whisper_samples.test }}
-          - name: 'Rag'
-            marker: 'rag'
-            cmd: 'tests/python_tests/samples'
+          - name: "Rag"
+            marker: "rag"
+            cmd: "tests/python_tests/samples"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).RAG_samples.test }}
-          - name: 'Speech generation'
-            marker: 'speech_generation'
-            cmd: 'tests/python_tests/samples'
+          - name: "Speech generation"
+            marker: "speech_generation"
+            cmd: "tests/python_tests/samples"
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).Speech_generation_samples.test }}
 
-    needs: [ smart_ci, openvino_download, genai_build_cmake, genai_build_wheel, genai_build_samples, genai_build_nodejs ]
+    needs:
+      [
+        smart_ci,
+        openvino_download,
+        genai_build_cmake,
+        genai_build_wheel,
+        genai_build_samples,
+        genai_build_nodejs,
+      ]
     timeout-minutes: 45
     defaults:
       run:
@@ -548,7 +584,7 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: "pip"
 
       - name: Install GenAI wheels
         if: ${{ matrix.test.run_condition }}
@@ -600,7 +636,7 @@ jobs:
       fail-fast: false
       matrix:
         build-type: [Release]
-    needs: [ smart_ci, openvino_download, genai_build_cmake, genai_build_wheel ]
+    needs: [smart_ci, openvino_download, genai_build_cmake, genai_build_wheel]
     if: ${{ fromJSON(needs.smart_ci.outputs.affected_components).continuous_batching }}
     timeout-minutes: 90
     defaults:
@@ -633,7 +669,7 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: "pip"
 
       - name: Install GenAI wheels
         uses: ./src/.github/actions/install_wheel
@@ -657,7 +693,7 @@ jobs:
 
   genai_nodejs_tests:
     name: Node.js bindings tests
-    needs: [ smart_ci, openvino_download, genai_build_nodejs ]
+    needs: [smart_ci, openvino_download, genai_build_nodejs]
     if: ${{ fromJSON(needs.smart_ci.outputs.affected_components).JS_API }}
     timeout-minutes: 20
     defaults:
@@ -713,7 +749,17 @@ jobs:
 
   Overall_Status:
     name: ci/gha_overall_status_macos
-    needs: [smart_ci, openvino_download, genai_build_cmake, genai_build_wheel, genai_build_samples, genai_tests_wheel, genai_samples_tests, genai_tools_tests]
+    needs:
+      [
+        smart_ci,
+        openvino_download,
+        genai_build_cmake,
+        genai_build_wheel,
+        genai_build_samples,
+        genai_tests_wheel,
+        genai_samples_tests,
+        genai_tools_tests,
+      ]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
