@@ -41,8 +41,8 @@ jobs:
           # Install OpenVINO nightly from Intel's repository
           pip install --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly `
                       --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/pre-release `
-                      "openvino>=2025.3.0" `
-                      "openvino_tokenizers[transformers]>=2025.3.0"
+                      "openvino==2025.3.0.dev20250710" `
+                      "openvino_tokenizers[transformers]==2025.3.0.dev20250710"
 
       - name: Configure CMake
         run: |
