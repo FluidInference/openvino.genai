@@ -8,7 +8,7 @@ on:
       - master
       - 'releases/**'
 
-permissions: read-all # Required by https://github.com/ossf/scorecard/blob/e23b8ad91fd6a64a0a971ca4fc0a4d1650725615/docs/checks.md#token-permissions
+permissions: read-all
 
 concurrency:
   # github.ref is not unique in post-commit
@@ -22,43 +22,27 @@ env:
   CMAKE_CXX_COMPILER_LAUNCHER: ccache
   CMAKE_C_COMPILER_LAUNCHER: ccache
   CCACHE_MAXSIZE: 500Mi
-  HF_HOME: C:/mount/caches/huggingface/win
-  OV_CACHE: C:/mount/caches/huggingface/.ov_cache/win
-  ARTIFACTS_SHARE: '/mount/build-artifacts'
+  HF_HOME: C:/Users/runneradmin/.cache/huggingface
+  OV_CACHE: C:/Users/runneradmin/.cache/ov_cache
   BASE_PRODUCT_TYPE: public_windows_vs2022
   GENAI_WHEELS_ARTIFACT_NAME: 'genai_wheels'
   GENAI_ARCHIVE_ARTIFACT_BASE_NAME: 'genai_cpack'
+  OPENVINO_VERSION: '2024.6.0'
 
 jobs:
   smart_ci:
     name: Smart CI
     runs-on: ubuntu-latest
     outputs:
-      affected_components: "${{ steps.smart_ci.outputs.affected_components }}"
-      changed_components: "${{ steps.smart_ci.outputs.changed_components }}"
-      skip_workflow: "${{ steps.smart_ci.outputs.skip_workflow }}"
+      skip_workflow: "false"
+      affected_components: '{"continuous_batching": {"test": true}, "LLM": {"test": true}, "visual_language": {"test": true}, "whisper": {"test": true}, "tokenizers": {"test": true}, "sampling": {"test": true}, "text_streamer": {"test": true}, "RAG": {"test": true}, "LLM_samples": {"test": true}, "Whisper_samples": {"test": true}, "Image_generation_samples": {"test": true}, "RAG_samples": {"test": true}, "Speech_generation_samples": {"test": true}, "JS_API": true}'
     steps:
       - name: checkout action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         timeout-minutes: 15
-        with:
-          sparse-checkout: .github
-
-      - name: Get affected components
-        id: smart_ci
-        uses: openvinotoolkit/openvino/.github/actions/smart-ci@master
-        with:
-          repository: ${{ github.repository }}
-          pr: ${{ github.event.number }}
-          commit_sha: ${{ github.sha }}
-          ref_name: ${{ github.ref_name }}
-          component_pattern: "category: ((?!Python API|CPP API).*)"
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          skip_when_only_listed_labels_set: 'GH Pages Docs'
-          skip_when_only_listed_files_changed: '*.md,*.rst,*.png,*.jpg,*.svg,*.gif'
 
       - name: Show affected components
-        run: echo "${{ toJSON(steps.smart_ci.outputs.affected_components) }}"
+        run: echo "Running all tests on forked repository"
         shell: bash
 
   openvino_download:
@@ -66,28 +50,42 @@ jobs:
     name: Download prebuilt OpenVINO
     outputs:
       status: ${{ steps.openvino_download.outcome }}
-      ov_artifact_name: ${{ steps.openvino_download.outputs.ov_artifact_name }}
-      ov_wheel_source: ${{ steps.openvino_download.outputs.ov_wheel_source }}
-      ov_version: ${{ steps.openvino_download.outputs.ov_version }}
+      ov_artifact_name: 'openvino_package'
+      ov_wheel_source: 'openvino==${{ env.OPENVINO_VERSION }}'
+      ov_version: ${{ env.OPENVINO_VERSION }}
     timeout-minutes: 10
     defaults:
       run:
         shell: bash
-    runs-on: aks-linux-medium
-    container:
-      image: 'openvinogithubactions.azurecr.io/openvino_provider:0.1.0'
-      volumes:
-        - /mount:/mount
-        - ${{ github.workspace }}:${{ github.workspace }}
-    continue-on-error: true
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: openvinotoolkit/openvino/.github/actions/openvino_provider@master
+    - name: Download OpenVINO Developer Package
       id: openvino_download
+      run: |
+        # Download OpenVINO developer package for Windows
+        wget -q https://storage.openvinotoolkit.org/repositories/openvino/packages/2024.6/windows/w_openvino_toolkit_windows_2024.6.0_16993_24ac91d0c1b_x86_64.zip -O openvino_dev.zip
+        
+        # Create directory structure
+        mkdir -p openvino_package
+        unzip -q openvino_dev.zip -d openvino_package
+        
+        # Move files to root level
+        mv openvino_package/w_openvino_toolkit_windows_2024.6.0_16993_24ac91d0c1b_x86_64/* openvino_package/
+        rmdir openvino_package/w_openvino_toolkit_windows_2024.6.0_16993_24ac91d0c1b_x86_64/
+        
+        # Download Node.js package (simplified)
+        mkdir -p openvino_package/openvino_node_npm_package
+        echo "Node.js package placeholder" > openvino_package/openvino_node_npm_package/placeholder.txt
+        
+        echo "outcome=success" >> $GITHUB_OUTPUT
+
+    - name: Upload OpenVINO Package
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
-        platform: windows
-        commit_packages_to_provide: wheels,openvino_node_npm_package.zip
-        revision: latest_available_commit
+        name: openvino_package
+        path: openvino_package/
+        if-no-files-found: 'error'
 
   genai_build_cpack:
     name: genai cpack (${{ matrix.build-type }})
@@ -99,7 +97,7 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    runs-on: aks-win-8-cores-16gb
+    runs-on: windows-2022
     env:
       CMAKE_GENERATOR: 'Ninja' # Ninja is the only Windows native generator supported by ccache
       OV_INSTALL_DIR: ${{ github.workspace }}\install\ov
@@ -158,14 +156,10 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
 
       - name: Generate product manifest
-        id: create_manifest
-        uses: openvinotoolkit/openvino/.github/actions/create_manifest@master
-        with:
-          repos: ${{ env.SRC_DIR }}
-          product_type: ${{ env.BASE_PRODUCT_TYPE }}_${{ matrix.build-type }}
-          target_arch: 'x86_64'
-          build_type: ${{ matrix.build-type }}
-          save_to: ${{ env.MANIFEST_PATH }}
+        run: |
+          echo "product_type: ${{ env.BASE_PRODUCT_TYPE }}_${{ matrix.build-type }}" > ${{ env.MANIFEST_PATH }}
+          echo "target_arch: x86_64" >> ${{ env.MANIFEST_PATH }}
+          echo "build_type: ${{ matrix.build-type }}" >> ${{ env.MANIFEST_PATH }}
 
       - name: Clean ccache stats
         run: ccache --zero-stats --show-config
@@ -250,7 +244,7 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    runs-on: aks-win-8-cores-16gb
+    runs-on: windows-2022
     env:
       OV_INSTALL_DIR: ${{ github.workspace }}\ov
       SRC_DIR: ${{ github.workspace }}\src
@@ -304,14 +298,8 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
 
       - name: Set CI environment
-        id: create_manifest
-        uses: openvinotoolkit/openvino/.github/actions/create_manifest@master
-        with:
-          repos: ${{ env.SRC_DIR }}
-          product_type: ${{ env.BASE_PRODUCT_TYPE }}_Release
-          target_arch: 'x86_64'
-          build_type: Release
-          save_to: ${{ github.workspace }}
+        run: |
+          echo "Setting up environment for wheel build"
 
       #
       # Build
@@ -379,12 +367,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    runs-on: aks-linux-medium
-    container:
-      image: openvinogithubactions.azurecr.io/library/python:3.12-slim
-      volumes:
-        - /mount:/mount
-        - ${{ github.workspace }}:${{ github.workspace }}
+    runs-on: ubuntu-latest
     env:
       WHEEL_PACKAGE: ${{ github.workspace }}/wheels
       MANIFEST_PATH: ${{ github.workspace }}/manifest.yml
@@ -403,18 +386,15 @@ jobs:
           path: ${{ github.workspace }}
           merge-multiple: true
 
-      - name: Store ${{ matrix.build_type }} artifacts to a shared drive
-        id: store_artifacts
-        if: ${{ always() }}
-        uses: openvinotoolkit/openvino/.github/actions/store_artifacts@master
+      - name: Store artifacts as GitHub artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          artifacts: |
+          name: stored_artifacts_${{ matrix.build-type }}
+          path: |
             ${{ github.workspace }}/${{ env.GENAI_ARCHIVE_ARTIFACT_BASE_NAME }}.zip
             ${{ env.WHEEL_PACKAGE }}
             ${{ env.MANIFEST_PATH }}
-          storage_dir: ${{ env.BASE_PRODUCT_TYPE }}_${{ matrix.build-type }}
-          storage_root: ${{ env.ARTIFACTS_SHARE }}
-          product_name: ${{ github.event.repository.name }}
+          if-no-files-found: 'error'
 
   genai_build_samples:
     name: Build Samples - ${{ matrix.build-type }}
@@ -427,7 +407,7 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    runs-on: aks-win-4-cores-8gb
+    runs-on: windows-2022
     env:
       OV_INSTALL_DIR: ${{ github.workspace }}/install/ov
       SRC_DIR: ${{ github.workspace }}/src
@@ -479,7 +459,7 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    runs-on: aks-win-4-cores-8gb
+    runs-on: windows-2022
 
     env:
       OV_INSTALL_DIR: ${{ github.workspace }}/ov
@@ -561,7 +541,7 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    runs-on: aks-win-16-cores-32gb
+    runs-on: windows-2022
     env:
       INSTALL_DIR: ${{ github.workspace }}/install
       SRC_DIR: ${{ github.workspace }}/src
@@ -619,26 +599,21 @@ jobs:
             marker: 'llm'
             cmd: 'tests/python_tests/samples'
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).LLM_samples.test }}
-            runner: 'aks-win-16-cores-32gb'
           - name: 'Whisper'
             marker: 'whisper'
             cmd: 'tests/python_tests/samples'
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).Whisper_samples.test }}
-            runner: 'aks-win-4-cores-8gb'
           - name: 'Image generation'
             marker: 'image_generation'
             cmd: 'tests/python_tests/samples'
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).Image_generation_samples.test }}
-            runner: 'aks-win-8-cores-16gb'
           - name: 'Rag'
             marker: 'rag'
             cmd: 'tests/python_tests/samples'
-            runner: 'aks-win-4-cores-8gb'
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).RAG_samples.test }}
           - name: 'Speech generation'
             marker: 'speech_generation'
             cmd: 'tests/python_tests/samples'
-            runner: 'aks-win-4-cores-8gb'
             run_condition: ${{ fromJSON(needs.smart_ci.outputs.affected_components).Speech_generation_samples.test }}
 
     needs: [ smart_ci, openvino_download, genai_build_cpack, genai_build_wheel, genai_build_samples, genai_build_nodejs ]
@@ -646,7 +621,7 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    runs-on: ${{ matrix.test.runner }}
+    runs-on: windows-2022
     env:
       INSTALL_DIR: ${{ github.workspace }}/install
       SRC_DIR: ${{ github.workspace }}/src
@@ -742,7 +717,7 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    runs-on: aks-win-8-cores-16gb
+    runs-on: windows-2022
     env:
       INSTALL_DIR: ${{ github.workspace }}/install
       SRC_DIR: ${{ github.workspace }}/src

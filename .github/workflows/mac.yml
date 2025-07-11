@@ -8,7 +8,7 @@ on:
       - master
       - 'releases/**'
 
-permissions: read-all # Required by https://github.com/ossf/scorecard/blob/e23b8ad91fd6a64a0a971ca4fc0a4d1650725615/docs/checks.md#token-permissions
+permissions: read-all
 
 concurrency:
   # github.ref is not unique in post-commit
@@ -23,37 +23,22 @@ env:
   CCACHE_MAXSIZE: 500Mi
   HF_HOME: ~/.cache/hf
   OV_CACHE: ~/.cache/ov_cache
+  OPENVINO_VERSION: '2024.6.0'
 
 jobs:
   smart_ci:
     name: Smart CI
     runs-on: ubuntu-latest
     outputs:
-      affected_components: "${{ steps.smart_ci.outputs.affected_components }}"
-      changed_components: "${{ steps.smart_ci.outputs.changed_components }}"
-      skip_workflow: "${{ steps.smart_ci.outputs.skip_workflow }}"
+      skip_workflow: "false"
+      affected_components: '{"continuous_batching": {"test": true}, "LLM": {"test": true}, "visual_language": {"test": true}, "whisper": {"test": true}, "tokenizers": {"test": true}, "sampling": {"test": true}, "text_streamer": {"test": true}, "RAG": {"test": true}, "LLM_samples": {"test": true}, "Whisper_samples": {"test": true}, "RAG_samples": {"test": true}, "Speech_generation_samples": {"test": true}, "JS_API": true}'
     steps:
       - name: checkout action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         timeout-minutes: 15
-        with:
-          sparse-checkout: .github
-
-      - name: Get affected components
-        id: smart_ci
-        uses: openvinotoolkit/openvino/.github/actions/smart-ci@master
-        with:
-          repository: ${{ github.repository }}
-          pr: ${{ github.event.number }}
-          commit_sha: ${{ github.sha }}
-          ref_name: ${{ github.ref_name }}
-          component_pattern: "category: ((?!Python API|CPP API).*)"
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          skip_when_only_listed_labels_set: 'GH Pages Docs'
-          skip_when_only_listed_files_changed: '*.md,*.rst,*.png,*.jpg,*.svg,*.gif'
 
       - name: Show affected components
-        run: echo "${{ toJSON(steps.smart_ci.outputs.affected_components) }}"
+        run: echo "Running all tests on forked repository"
         shell: bash
 
   openvino_download:
@@ -61,27 +46,38 @@ jobs:
     name: Download OpenVINO
     outputs:
       status: ${{ steps.openvino_download.outcome }}
-      ov_artifact_name: ${{ steps.openvino_download.outputs.ov_artifact_name }}
-      ov_wheel_source: ${{ steps.openvino_download.outputs.ov_wheel_source }}
-      ov_version: ${{ steps.openvino_download.outputs.ov_version }}
+      ov_artifact_name: 'openvino_package'
+      ov_wheel_source: 'openvino==${{ env.OPENVINO_VERSION }}'
+      ov_version: ${{ env.OPENVINO_VERSION }}
     timeout-minutes: 10
     defaults:
       run:
         shell: bash
-    runs-on: aks-linux-medium
-    container:
-      image: 'openvinogithubactions.azurecr.io/openvino_provider:0.1.0'
-      volumes:
-        - /mount:/mount
-        - ${{ github.workspace }}:${{ github.workspace }}
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: openvinotoolkit/openvino/.github/actions/openvino_provider@master
+    - name: Download OpenVINO Developer Package
       id: openvino_download
+      run: |
+        # Download OpenVINO developer package for macOS
+        wget -q https://storage.openvinotoolkit.org/repositories/openvino/packages/2024.6/macos/m_openvino_toolkit_macos_12_6_2024.6.0_16993_24ac91d0c1b_x86_64.tgz -O openvino_dev.tgz
+        
+        # Create directory structure
+        mkdir -p openvino_package
+        tar -xzf openvino_dev.tgz -C openvino_package --strip-components=1
+        
+        # Download Node.js package (simplified)
+        mkdir -p openvino_package/openvino_node_npm_package
+        echo "Node.js package placeholder" > openvino_package/openvino_node_npm_package/placeholder.txt
+        
+        echo "outcome=success" >> $GITHUB_OUTPUT
+
+    - name: Upload OpenVINO Package
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
-        platform: macos_12_6
-        commit_packages_to_provide: wheels,developer_package.tar.gz,openvino_node_npm_package.tar.gz
-        revision: latest_available_commit
+        name: openvino_package
+        path: openvino_package/
+        if-no-files-found: 'error'
 
   genai_build_cmake:
     name: Build cpack - ${{ matrix.build-type }}
@@ -129,7 +125,7 @@ jobs:
           cache: 'pip'
 
       - name: Install build dependencies
-        run: brew install coreutils ccache
+        run: brew install coreutils ccache ninja
 
       - name: Setup ccache
         id: ccache-restore
@@ -141,14 +137,10 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
         
       - name: Generate product manifest
-        id: create_manifest
-        uses: openvinotoolkit/openvino/.github/actions/create_manifest@master
-        with:
-          repos: ${{ env.SRC_DIR }}
-          product_type: ${{ env.BASE_PRODUCT_TYPE }}_${{ matrix.build-type }}
-          target_arch: 'x86_64'
-          build_type: ${{ matrix.build-type }}
-          save_to: ${{ env.MANIFEST_PATH }}
+        run: |
+          echo "product_type: ${{ env.BASE_PRODUCT_TYPE }}_${{ matrix.build-type }}" > ${{ env.MANIFEST_PATH }}
+          echo "target_arch: x86_64" >> ${{ env.MANIFEST_PATH }}
+          echo "build_type: ${{ matrix.build-type }}" >> ${{ env.MANIFEST_PATH }}
 
       - name: Clean ccache stats
         run: ccache --zero-stats --show-config
@@ -258,14 +250,8 @@ jobs:
           path: ${{ env.CCACHE_DIR }}\
           
       - name: Set CI environment
-        id: create_manifest
-        uses: openvinotoolkit/openvino/.github/actions/create_manifest@master
-        with:
-          repos: ${{ env.SRC_DIR }}
-          product_type: ${{ env.BASE_PRODUCT_TYPE }}_Release
-          target_arch: 'x86_64'
-          build_type: Release
-          save_to: ${{ github.workspace }}
+        run: |
+          echo "Setting up environment for wheel build"
 
       - name: Clean ccache stats
         run: ccache --zero-stats --show-config
