@@ -58,8 +58,5 @@ jobs:
           cmake --install build --config ${{ matrix.build_type }} --prefix install
       - name: Test basic functionality
         run: |
-          if [ -f "tests/python_tests/test_tokenizer.py" ]; then
-            pip install pytest
-            pip install -r tests/python_tests/requirements.txt || echo "No requirements file found"
-            python -m pytest tests/python_tests/test_tokenizer.py -v || echo "Some tests may require additional models"
-          fi
+          source ${{ env.OV_INSTALL_DIR }}/setupvars.sh
+          python3 -m pytest -v ${{ env.SRC_DIR }}/tests/python_tests/test_llm_pipeline.py -k "not test_perf_metrics_with_structured_output"
