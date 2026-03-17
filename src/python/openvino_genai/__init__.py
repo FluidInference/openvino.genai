@@ -18,7 +18,22 @@ from .py_openvino_genai import (
     StreamerBase,
     get_version,
     StreamingStatus,
-    TextStreamer
+    TextStreamer,
+    TextParserStreamer,
+)
+
+from .py_openvino_genai import (
+    Parser,
+    VLLMParserWrapper,
+    ReasoningParser,
+    DeepSeekR1ReasoningParser,
+    Phi4ReasoningParser,
+    Llama3JsonToolParser,
+    Llama3PythonicToolParser,
+    IncrementalParser,
+    ReasoningIncrementalParser,
+    DeepSeekR1ReasoningIncrementalParser,
+    Phi4ReasoningIncrementalParser,
 )
 
 __version__ = get_version()
@@ -36,10 +51,7 @@ from .py_openvino_genai import (
 )
 
 # LoRA
-from .py_openvino_genai import (
-    Adapter,
-    AdapterConfig
-)
+from .py_openvino_genai import Adapter, AdapterConfig
 
 # Generation config
 from .py_openvino_genai import (
@@ -47,22 +59,22 @@ from .py_openvino_genai import (
     StructuralTagItem,
     StructuralTagsConfig,
     StructuredOutputConfig,
-    StopCriteria
+    StopCriteria,
 )
 
+# Chat history
+from .py_openvino_genai import ChatHistory
+
 # Tokenizers
-from .py_openvino_genai import (
-    TokenizedInputs,
-    Tokenizer
-)
+from .py_openvino_genai import TokenizedInputs, Tokenizer
 
 # Whisper
 from .py_openvino_genai import (
     WhisperGenerationConfig,
     WhisperPipeline,
-    ChunkStreamerBase,
     WhisperRawPerfMetrics,
-    WhisperPerfMetrics
+    WhisperPerfMetrics,
+    WhisperWordTiming,
 )
 
 # Image generation
@@ -84,6 +96,17 @@ from .py_openvino_genai import (
     TorchGenerator,
     ImageGenerationPerfMetrics,
     RawImageGenerationPerfMetrics,
+    TaylorSeerCacheConfig,
+)
+
+# Video generation
+from .py_openvino_genai import (
+    LTXVideoTransformer3DModel,
+    AutoencoderKLLTXVideo,
+    Text2VideoPipeline,
+    VideoGenerationConfig,
+    VideoGenerationResult,
+    VideoGenerationPerfMetrics,
 )
 
 # Continuous batching
@@ -98,19 +121,16 @@ from .py_openvino_genai import (
     SparseAttentionMode,
     SparseAttentionConfig,
     KVCrushAnchorPointMode,
-    KVCrushConfig
+    KVCrushConfig,
 )
 
 # RAG
-from .py_openvino_genai import (
-    TextEmbeddingPipeline,
-    TextRerankPipeline
-)
+from .py_openvino_genai import TextEmbeddingPipeline, TextRerankPipeline
 
 # Speech generation
 from .py_openvino_genai import (
     SpeechGenerationConfig,
     SpeechGenerationPerfMetrics,
     Text2SpeechDecodedResults,
-    Text2SpeechPipeline
+    Text2SpeechPipeline,
 )

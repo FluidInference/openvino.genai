@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import os
 import json
+import torch
 import scipy
 import datetime
 import logging as log
@@ -12,10 +13,11 @@ import llm_bench_utils.model_utils as model_utils
 import llm_bench_utils.metrics_print as metrics_print
 from llm_bench_utils.prompt_utils import get_text_prompt
 import llm_bench_utils.gen_output_data as gen_output_data
-from task.pipeline_utils import CommonPipeline, execution_time_in_sec
+from task.pipeline_utils import CommonPipeline, execution_time_in_sec, collect_prompts_step
 from llm_bench_utils.memory_monitor import MemMonitorWrapper
 from pathlib import Path
 from typing import Any
+
 
 FW_UTILS = {"pt": llm_bench_utils.pt_utils, "ov": llm_bench_utils.ov_utils}
 
@@ -29,6 +31,22 @@ class TextRerankerOptimum(CommonPipeline):
 
         self.top_n = args.get("rerank_top_n")
         self.max_length = args.get("rerank_max_length")
+        self.use_case = args.get("use_case")
+
+    # according to transformers Qwen3-Embedding-0.6B model card:
+    # https://huggingface.co/Qwen/Qwen3-Reranker-0.6B#transformers-usage
+    @execution_time_in_sec
+    def tokenize_qwen(self, input_text):
+        prefix = '<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the '\
+                 + 'Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>\n<|im_start|>user\n'
+        suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        task = "Given a web search query, retrieve relevant passages that answer the query"
+        max_length = self.max_length or 8192
+        pairs = []
+        for doc in self.texts:
+            pairs.append(f"{prefix}<Instruct>: {task}\n<Query>: {input_text}\n<Document>: {doc}{suffix}")
+        inputs = self.tokenizer(pairs, padding=True, truncation=True, max_length=max_length, return_tensors="pt", padding_side='left')
+        return inputs
 
     @execution_time_in_sec
     def tokenize(self, input_text: str, **kwargs):
@@ -47,13 +65,27 @@ class TextRerankerOptimum(CommonPipeline):
 
     @execution_time_in_sec
     def generate(self, input_data: Any, **kwargs):
-        outputs = self.model(**input_data).logits
-        if outputs.shape[1] > 1:
-            scores = outputs[:, 1]
-        else:
-            scores = outputs.flatten()
+        with torch.no_grad():
+            outputs = self.model(**input_data).logits
 
-        scores = scipy.special.expit(scores)
+        # according to transformers Qwen3-Embedding-0.6B model card:
+        # https://huggingface.co/Qwen/Qwen3-Reranker-0.6B#transformers-usage
+        if self.use_case.is_qwen_causallm_arch(self.model.config):
+            batch_scores = outputs[:, -1, :]
+
+            token_false_id = self.tokenizer.convert_tokens_to_ids("no")
+            token_true_id = self.tokenizer.convert_tokens_to_ids("yes")
+            true_vector = batch_scores[:, token_true_id]
+            false_vector = batch_scores[:, token_false_id]
+            batch_scores = torch.stack([false_vector, true_vector], dim=1)
+            batch_scores = torch.nn.functional.log_softmax(batch_scores, dim=1)
+            scores = batch_scores[:, 1].exp().tolist()
+        else:
+            if outputs.shape[1] > 1:
+                scores = outputs[:, 1]
+            else:
+                scores = outputs.flatten()
+            scores = scipy.special.expit(scores)
         generation_result = []
         for index, (score, _) in enumerate(zip(scores, self.texts)):
             generation_result.append((index, score))
@@ -145,7 +177,10 @@ class TextRerankerOptimum(CommonPipeline):
         return iter_data, []
 
     def run(self, input_text: str, iter_num: int, prompt_index: int, proc_id: int, bench_hook: object | None) -> tuple[dict, list]:
-        tokenized_input, tokenization_time = self.tokenize(input_text)
+        if self.model.config.model_type == "qwen3":
+            tokenized_input, tokenization_time = self.tokenize_qwen(input_text)
+        else:
+            tokenized_input, tokenization_time = self.tokenize(input_text)
         input_tokens = tokenized_input["input_ids"] if "input_ids" in tokenized_input else tokenized_input
         input_token_size = input_tokens[0].numel() * len(self.texts)
         self.print_batch_size_info(iter_num, input_token_size)
@@ -158,7 +193,7 @@ class TextRerankerOptimum(CommonPipeline):
             self.mem_consumption_meter.start()
         generation_result, generation_time = self.generate(tokenized_input)
         if (self.mem_consumption_level == 1 and iter_num == 0) or self.mem_consumption_level == 2:
-            self.mem_consumption_meter.stop_and_collect_data(f"{'P' + str(iter_num) if iter_num > 0 else 'warm-up'}_{proc_id}")
+            self.mem_consumption_meter.stop_and_collect_data(f"{'P' + str(iter_num) if iter_num > 0 else 'warm-up'}")
             max_rss_mem_consumption, rss_mem_increase, max_sys_mem_consumption, sys_mem_increase = self.mem_consumption_meter.get_data()
 
         iter_data, _ = self.postprocess_output_info(
@@ -308,7 +343,7 @@ class TextRerankerGenAI(CommonPipeline):
             self.mem_consumption_meter.start()
         generation_result, generation_time = self.generate(input_text)
         if (self.mem_consumption_level == 1 and iter_num == 0) or self.mem_consumption_level == 2:
-            self.mem_consumption_meter.stop_and_collect_data(f"{'P' + str(iter_num) if iter_num > 0 else 'warm-up'}_{proc_id}")
+            self.mem_consumption_meter.stop_and_collect_data(f"{'P' + str(iter_num) if iter_num > 0 else 'warm-up'}")
             max_rss_mem_consumption, rss_mem_increase, max_sys_mem_consumption, sys_mem_increase = self.mem_consumption_meter.get_data()
 
         iter_data, _ = self.postprocess_output_info(
@@ -335,19 +370,7 @@ def run_text_reranker_benchmark(
 ) -> tuple[list, float, dict]:
     model, tokenizer, pretrain_time, bench_hook, use_genai = FW_UTILS[framework].create_text_reranker_model(model_path, device, mem_consumption, **args)
     iter_data_list = []
-    input_text_list = get_text_prompt(args)
-    if args["prompt_index"] is None:
-        prompt_idx_list = [prompt_idx for prompt_idx, _ in enumerate(input_text_list)]
-        text_list = input_text_list
-    else:
-        prompt_idx_list = []
-        text_list = []
-        for i in args["prompt_index"]:
-            if 0 <= i < len(input_text_list):
-                text_list.append(input_text_list[i])
-                prompt_idx_list.append(i)
-    if len(input_text_list) == 0:
-        raise RuntimeError("==Failure prompts is empty ==")
+    text_list, prompt_idx_list = collect_prompts_step(args, get_text_prompt)
 
     if not use_genai:
         text_reranker_pipeline = TextRerankerOptimum(model, tokenizer, args, model_path, mem_consumption)
@@ -408,6 +431,6 @@ def get_texts_from_file(args: dict) -> list:
             texts_list = [
                 "Intel Core Ultra processors incorporate an AI-optimized architecture that supports "
                 + "new user experiences and the next wave of commercial applications.",
-                "Intel Core Ultra processors are designed to provide enhanced performance and efficiency for a wide range of computing tasks.",
+                "Intel Core Ultra processors are designed to provide enhanced performance and efficiency for a wide range of computing tasks."
             ]
     return texts_list

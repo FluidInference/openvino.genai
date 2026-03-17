@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "tokenizer/tokenizer_impl.hpp"
+
+#include <utility>
+
 #include "add_second_input_pass.hpp"
 #include "sampling/structured_output/structured_output_controller.hpp"
 #include "openvino/genai/version.hpp"
@@ -54,6 +57,15 @@ void parse_chat_template_from_file(const std::filesystem::path& path, std::strin
     if (!std::filesystem::exists(path)) {
         return;
     }
+
+    if (path.extension() == ".jinja") {
+        std::ifstream file(path);
+        if (file) {
+            value.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        }
+        return;
+    }
+
     auto json_data = nlohmann::json::parse(std::ifstream{path});
     if (!json_data.contains("chat_template")) {
         return;
@@ -150,7 +162,7 @@ void Tokenizer::TokenizerImpl::set_state_value(ov::VariableState& state, std::op
     std::optional<T> last_value;
     ov::genai::utils::read_anymap_param(state_flags, state.get_name(), last_value);
 
-    // If requested add[skip]_special_tokens, max_length, pading mode, etc.
+    // If requested add[skip]_special_tokens, max_length, padding mode, etc.
     // is different from the stored state, need to set state variable.
     // Or if we run for the first time and don't know the latest state we need to set it.
     if (value.has_value() && (!last_value.has_value() || *value != *last_value)) {
@@ -264,9 +276,11 @@ void Tokenizer::TokenizerImpl::setup_tokenizer(const std::filesystem::path& mode
     std::filesystem::path ov_tokenizer_filesystem_path;
 #ifdef _WIN32
     const wchar_t* ov_tokenizer_path_w = _wgetenv(ScopedVar::ENVIRONMENT_VARIABLE_NAME_W);
+    OPENVINO_ASSERT(ov_tokenizer_path_w != nullptr, "Environment variable for tokenizer path is not set");
     ov_tokenizer_filesystem_path = std::filesystem::path(std::wstring(ov_tokenizer_path_w));
 #else
     const char* ov_tokenizer_path = getenv(ScopedVar::ENVIRONMENT_VARIABLE_NAME);
+    OPENVINO_ASSERT(ov_tokenizer_path != nullptr, "Environment variable for tokenizer path is not set");
     ov_tokenizer_filesystem_path = std::filesystem::path(ov_tokenizer_path);
 #endif
     m_shared_object_ov_tokenizers = load_shared_object(ov_tokenizer_filesystem_path);
@@ -291,8 +305,9 @@ void Tokenizer::TokenizerImpl::setup_tokenizer(const std::filesystem::path& mode
         }
         if (auto val = get_if_exist<std::string>(tokenizer_config, "chat_template")) {
             m_chat_template = *val;
-        }            
+        }         
         if (!m_chat_template.empty()) {
+            m_original_chat_template = m_chat_template;
             m_chat_template = patch_gguf_chat_template(m_chat_template);
         }
         ov_tokenizer->set_rt_info(ov::genai::get_version().buildNumber, "openvino_genai_version");
@@ -320,11 +335,11 @@ void Tokenizer::TokenizerImpl::setup_tokenizer(const std::filesystem::path& mode
         return;
     }
     if (std::filesystem::exists(models_path / "openvino_tokenizer.xml")) {
-        ov_tokenizer = core.read_model(models_path / "openvino_tokenizer.xml", {}, filtered_properties);
+        ov_tokenizer = core.read_model(models_path / "openvino_tokenizer.xml", {}, std::as_const(filtered_properties));
     }
 
     if (std::filesystem::exists(models_path / "openvino_detokenizer.xml")) {
-        ov_detokenizer = core.read_model(models_path / "openvino_detokenizer.xml", {}, filtered_properties);
+        ov_detokenizer = core.read_model(models_path / "openvino_detokenizer.xml", {}, std::as_const(filtered_properties));
     }
 
     read_config(models_path);
@@ -334,6 +349,8 @@ void Tokenizer::TokenizerImpl::setup_tokenizer(const std::filesystem::path& mode
     parse_chat_template_from_file(models_path / "tokenizer_config.json", m_chat_template);
     parse_chat_template_from_file(models_path / "processor_config.json", m_chat_template);
     parse_chat_template_from_file(models_path / "chat_template.json", m_chat_template);
+    parse_chat_template_from_file(models_path / "chat_template.jinja", m_chat_template);
+    m_original_chat_template = m_chat_template;
     setup_tokenizer(std::make_pair(ov_tokenizer, ov_detokenizer), filtered_properties);
 }
 
@@ -365,7 +382,7 @@ void Tokenizer::TokenizerImpl::setup_tokenizer(const std::pair<std::shared_ptr<o
     is_paired_input = pass_errors.str().empty() && ov_tokenizer && ov_tokenizer->get_parameters().size() == 2;
     OPENVINO_ASSERT(!two_input_requested || is_paired_input || !ov_tokenizer, "Two input requested but AddSecondInputPass failed with " + pass_errors.str());
     
-    // temporary allow absense both tokenizer and detokenizer for GGUF support
+    // temporary allow absence both tokenizer and detokenizer for GGUF support
     // TODO: remove this code once Tokenizers can be created from GGUF file
     if (!ov_tokenizer && !ov_detokenizer) {
         return;
@@ -405,12 +422,36 @@ void Tokenizer::TokenizerImpl::setup_tokenizer(const std::pair<std::shared_ptr<o
         m_eos_token_id = find_or_fallback(rt_info, "eos_token_id", m_eos_token_id);
 
         parse_chat_template_from_tokenizer(ov_tokenizer, m_chat_template);
-
+        m_original_chat_template = m_chat_template;
         m_chat_template = remap_template(m_chat_template);
 
         // Initialize tokenizer's cache to save time later.
-        // TODO CVS-150630: Empty strings sporadically can fail, therefore use nonempty string for warmup.
-        encode("non empty string");
+        // Run in async mode for speed to improve TTFT
+        {
+            int idx = m_ireq_queue_tokenizer->get_idle().get();
+            auto& req = m_ireq_queue_tokenizer->get(idx);
+
+            // TODO CVS-150630: Empty strings sporadically can fail, therefore use nonempty string for warmup.
+            // shared_ptr to keep input data alive until async request is finished
+            auto warmup_text = std::make_shared<std::string>("non empty string");
+            auto warmup_tensor = ov::Tensor(ov::element::string, ov::Shape{1}, warmup_text.get());
+
+            req.set_input_tensor(0, warmup_tensor);
+            if (is_paired_input) {
+                // Set to an empty tensor to avoid errors.
+                // The subgraph within the ov::Model will handle this scenario, ensuring the output remains correct.
+                req.set_input_tensor(1, ov::Tensor{ov::element::string, {0}});
+            }
+
+            req.set_callback([queue = m_ireq_queue_tokenizer.get(), idx, warmup_text, &req](std::exception_ptr) {
+                // this empty placeholder keeps input data alive until request is finished
+                (void) warmup_text;
+                queue->return_to(idx);
+                req.set_callback({});
+
+            });
+            req.start_async();
+        }
     }
 
     if (ov_detokenizer) {
@@ -433,8 +474,28 @@ void Tokenizer::TokenizerImpl::setup_tokenizer(const std::pair<std::shared_ptr<o
             m_bos_token = decode(std::vector{m_bos_token_id}, {ov::genai::skip_special_tokens(false)});
         if (m_eos_token_id != -1 && m_eos_token.empty())
             m_eos_token = decode(std::vector{m_eos_token_id}, {ov::genai::skip_special_tokens(false)});
+            
         // Initialize detokenizer's cache to save time later.
-        decode({1, 33, 199, 42, 42});
+        {
+            int idx = m_ireq_queue_detokenizer->get_idle().get();
+            auto& req = m_ireq_queue_detokenizer->get(idx);
+
+            // shared_ptr to keep input data alive until async request is finished
+            auto warmup_tokens = std::make_shared<std::vector<int64_t>>(
+                std::initializer_list<int64_t>{1, 33, 199, 42, 42}
+            );
+
+            auto warmup_tensor = ov::Tensor(ov::element::i64, ov::Shape{1, warmup_tokens->size()}, warmup_tokens->data());
+            req.set_input_tensor(0, warmup_tensor);
+
+            req.set_callback([queue = m_ireq_queue_detokenizer.get(), idx, warmup_tokens, &req](std::exception_ptr) {
+                // this empty placeholder keeps input data alive until request is finished
+                (void) warmup_tokens;
+                queue->return_to(idx);
+                req.set_callback({});
+            });
+            req.start_async();
+        }
 
         m_vocab = read_vocab_from_detokenizer_model(ov_detokenizer);
     }
@@ -726,34 +787,43 @@ std::vector<std::string> Tokenizer::TokenizerImpl::decode(const std::vector<std:
     return std::vector<std::string>(res_data, res_data + res.get_shape()[0]);
 }
 
-std::string Tokenizer::TokenizerImpl::apply_chat_template(ChatHistory history,
-                                bool add_generation_prompt,
-                                const std::string& chat_template) const {
+std::string Tokenizer::TokenizerImpl::apply_chat_template(
+    const ChatHistory& history,
+    bool add_generation_prompt,
+    const std::string& chat_template,
+    const std::optional<JsonContainer>& tools,
+    const std::optional<JsonContainer>& extra_context
+) const {
     std::string chat_tpl = chat_template.empty() ? m_chat_template : remap_template(chat_template);
     OPENVINO_ASSERT(!chat_tpl.empty(),
                     "Chat template wasn't found. This may indicate that the model wasn't trained for chat scenario."
                     " Please add 'chat_template' to tokenizer_config.json to use the model in chat scenario."
                     " For more information see the section Troubleshooting in README.md");
 
+    auto resolved_tools = tools.value_or(history.get_tools());
+    auto resolved_extra_context = extra_context.value_or(history.get_extra_context());
+
+    OPENVINO_ASSERT(resolved_tools.is_array(),
+                    "Tools should be an array-like JsonContainer, got: ", resolved_tools.type_name());
+    OPENVINO_ASSERT(resolved_extra_context.is_object(),
+                    "Extra context should be an object-like JsonContainer, got: ", resolved_extra_context.type_name());
+
     minja::chat_template minja_template(chat_tpl, m_bos_token, m_eos_token);
-
-    nlohmann::ordered_json messages = nlohmann::ordered_json::array();
-    for (const auto& message : history) {
-        nlohmann::ordered_json msg;
-        for (const auto& [key, value] : message) {
-            msg[key] = value;
-        }
-        messages.push_back(msg);
-    }
-
+    
     minja::chat_template_inputs minja_inputs;
-    minja_inputs.messages = messages;
+    minja_inputs.messages = history.get_messages();
+    if (!resolved_tools.empty()) {
+        minja_inputs.tools = resolved_tools;
+    }
     minja_inputs.add_generation_prompt = add_generation_prompt;
     minja_inputs.extra_context = nlohmann::ordered_json::object();
     minja_inputs.extra_context["bos_token"] = m_bos_token;
     minja_inputs.extra_context["eos_token"] = m_eos_token;
     minja_inputs.extra_context["pad_token"] = m_pad_token;
-
+    if (!resolved_extra_context.empty()) {
+        minja_inputs.extra_context.update(resolved_extra_context);
+    }
+    
     std::string result;
     try {
         result = minja_template.apply(minja_inputs);
@@ -766,17 +836,22 @@ std::string Tokenizer::TokenizerImpl::apply_chat_template(ChatHistory history,
                         "Minja's error: ", error.what());
     }
     OPENVINO_ASSERT(!result.empty(), "Applied chat template resulted in an empty string. "
-                                        "Please check the chat template or apply template manually to your prompt before calling generate."
-                                        "For example: <start_of_turn>user{user_prompt}<end_of_turn><start_of_turn>model");
+                                     "Please check the chat template or apply template manually to your prompt before calling generate."
+                                     "For example: <start_of_turn>user{user_prompt}<end_of_turn><start_of_turn>model");
     return result;
 }
 
 void Tokenizer::TokenizerImpl::set_chat_template(const std::string& chat_template) {
+    m_original_chat_template = chat_template;
     m_chat_template = remap_template(chat_template);
 }
 
-std::string Tokenizer::TokenizerImpl::get_chat_template() {
+std::string Tokenizer::TokenizerImpl::get_chat_template() const {
     return m_chat_template;
+}
+
+std::string Tokenizer::TokenizerImpl::get_original_chat_template() const {
+    return m_original_chat_template;
 }
 
 std::shared_ptr<StructuredOutputController> Tokenizer::TokenizerImpl::get_structured_output_controller(std::optional<int> vocab_size) {

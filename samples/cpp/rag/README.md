@@ -15,19 +15,19 @@ pip install --upgrade-strategy eager -r ../../export-requirements.txt
 To export text embedding model run Optimum CLI command:
 
 ```sh
-optimum-cli export openvino --trust-remote-code --model BAAI/bge-small-en-v1.5 BAAI/bge-small-en-v1.5
+optimum-cli export openvino --task feature-extraction --model BAAI/bge-small-en-v1.5 BAAI/bge-small-en-v1.5
 ```
 
 To export text reranking model run Optimum CLI command:
 
 ```sh
-optimum-cli export openvino --trust-remote-code --model cross-encoder/ms-marco-MiniLM-L6-v2 cross-encoder/ms-marco-MiniLM-L6-v2
+optimum-cli export openvino --task text-classification --model cross-encoder/ms-marco-MiniLM-L6-v2 cross-encoder/ms-marco-MiniLM-L6-v2
 ```
 
 
 ## Run
 
-Follow [Get Started with Samples](https://docs.openvino.ai/2025/get-started/learn-openvino/openvino-samples/get-started-demos.html) to run the sample.
+Follow [Get Started with Samples](https://docs.openvino.ai/2026/get-started/learn-openvino/openvino-samples/get-started-demos.html) to run the sample.
 
 ### 1. Text Embedding Sample (`text_embeddings.cpp`)
 - **Description:**

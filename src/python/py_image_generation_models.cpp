@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2025 Intel Corporation
+// Copyright (C) 2023-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #include <filesystem>
@@ -94,6 +94,16 @@ void init_clip_text_model(py::module_& m) {
                 Compiles the model.
                 device (str): Device to run the model on (e.g., CPU, GPU).
                 kwargs: Device properties.
+            )")
+        .def(
+            "export_model",
+             &ov::genai::CLIPTextModel::export_model,
+             py::arg("export_path"),
+             R"(
+                Exports compiled model to a specified directory. Can significantly reduce model load time, especially for large models.
+                export_path (os.PathLike): A path to a directory to export compiled model to.
+
+                Use `blob_path` property to load previously exported models.
             )");
 }
 
@@ -170,9 +180,25 @@ void init_t5_encoder_model(py::module_& m) {
             model (T5EncoderModel): T5EncoderModel model
         )")
         .def("reshape", &ov::genai::T5EncoderModel::reshape, py::arg("batch_size"), py::arg("max_sequence_length"))
-        .def("infer", 
-            &ov::genai::T5EncoderModel::infer, 
-            py::call_guard<py::gil_scoped_release>(), 
+        .def("infer",
+            [](
+                ov::genai::T5EncoderModel& self,
+                const std::string& pos_prompt,
+                const std::string& neg_prompt,
+                bool do_classifier_free_guidance,
+                int max_sequence_length,
+                const py::kwargs& kwargs
+            ) {
+                ov::AnyMap tokenization_params = pyutils::kwargs_to_any_map(kwargs);
+                py::gil_scoped_release rel;
+                return self.infer(
+                    pos_prompt,
+                    neg_prompt,
+                    do_classifier_free_guidance,
+                    max_sequence_length,
+                    tokenization_params
+                );
+            },
             py::arg("pos_prompt"), 
             py::arg("neg_prompt"), 
             py::arg("do_classifier_free_guidance"), 
@@ -268,6 +294,12 @@ void init_unet2d_condition_model(py::module_& m) {
                 Compiles the model.
                 device (str): Device to run the model on (e.g., CPU, GPU).
                 kwargs: Device properties.
+            )")
+        .def("export_model", &ov::genai::UNet2DConditionModel::export_model, py::arg("export_path"), R"(
+                Exports compiled model to a specified directory. Can significantly reduce model load time, especially for large models.
+                export_path (os.PathLike): A path to a directory to export compiled model to.
+
+                Use `blob_path` property to load previously exported models.
             )");
 }
 
@@ -511,5 +543,15 @@ void init_autoencoder_kl(py::module_& m) {
         .def("decode", &ov::genai::AutoencoderKL::decode, py::call_guard<py::gil_scoped_release>(), py::arg("latent"))
         .def("encode", &ov::genai::AutoencoderKL::encode, py::call_guard<py::gil_scoped_release>(), py::arg("image"), py::arg("generator"))
         .def("get_config", &ov::genai::AutoencoderKL::get_config)
-        .def("get_vae_scale_factor", &ov::genai::AutoencoderKL::get_vae_scale_factor);
+        .def("get_vae_scale_factor", &ov::genai::AutoencoderKL::get_vae_scale_factor)
+        .def("export_model",
+            &ov::genai::AutoencoderKL::export_model,
+            py::arg("export_path"),
+            R"(
+                Exports compiled models to a specified directory. Can significantly reduce model load time, especially for large models.
+                export_path (os.PathLike): A path to a directory to export compiled models to.
+
+                Use `blob_path` property to load previously exported models.
+            )"
+        );
 }

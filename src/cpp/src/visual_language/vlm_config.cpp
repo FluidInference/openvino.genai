@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2025 Intel Corporation
+// Copyright (C) 2023-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #include "vlm_config.hpp"
@@ -17,11 +17,13 @@ VLMModelType to_vlm_model_type(const std::string& value) {
         {"llava", VLMModelType::LLAVA},
         {"llava-qwen2", VLMModelType::NANOLLAVA},
         {"llava_next", VLMModelType::LLAVA_NEXT},
+        {"llava_next_video", VLMModelType::LLAVA_NEXT_VIDEO},
         {"internvl_chat", VLMModelType::INTERNVL_CHAT},
         {"phi3_v", VLMModelType::PHI3_V},
         {"phi4mm", VLMModelType::PHI4MM},
         {"qwen2_vl", VLMModelType::QWEN2_VL},
         {"qwen2_5_vl", VLMModelType::QWEN2_5_VL},
+        {"qwen3_vl", VLMModelType::QWEN3_VL},
         {"gemma3", VLMModelType::GEMMA3},
     };
 
@@ -53,22 +55,25 @@ VLMConfig::VLMConfig(const std::filesystem::path& json_path) {
 
     // Setting llava_next specific config params
     read_json_param(parsed, "image_newline", image_newline);
-    if (parsed.contains("vision_config")) {
-        read_json_param(parsed.at("vision_config"), "patch_size", vision_config_patch_size);
-    }
+    read_json_param(parsed, "vision_config.patch_size", vision_config_patch_size);
+
     // phi3_v and phi4mm
-    if (parsed.contains("sub_GN")) {
+    if (parsed.contains("sub_GN") && parsed.at("sub_GN").is_array()) {
         sub_GN = parsed.at("sub_GN").get<std::vector<std::vector<std::vector<std::vector<float>>>>>().at(0).at(0).at(0);
     }
     assert_size(sub_GN.size(), model_type);
-    if (parsed.contains("glb_GN")) {
+    if (parsed.contains("glb_GN") && parsed.at("glb_GN").is_array()) {
         glb_GN = parsed.at("glb_GN").get<std::vector<std::vector<std::vector<float>>>>().at(0).at(0);
     }
     assert_size(glb_GN.size(), model_type);
+
     // Qwen2.5VL
-    if (parsed.contains("vision_config")) {
-        read_json_param(parsed.at("vision_config"), "window_size", vision_config_window_size);
-    }
+    read_json_param(parsed, "vision_config.window_size", vision_config_window_size);
+    read_json_param(parsed, "vision_config.tokens_per_second", vision_config_tokens_per_second);
+
+    // Qwen3-VL
+    read_json_param(parsed, "vision_config.num_position_embeddings", vision_config_num_position_embeddings);
+    read_json_param(parsed, "vision_config.deepstack_visual_indexes", vision_config_deepstack_visual_indexes);
 }
 
 } // namespace ov::genai

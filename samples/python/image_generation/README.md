@@ -5,10 +5,12 @@ Examples in this folder showcase inference of text to image models like Stable D
 There are several sample files:
  - [`text2image.py`](./text2image.py) demonstrates basic usage of the text to image pipeline
  - [`lora_text2image.py`](./lora_text2image.py) shows how to apply LoRA adapters to the pipeline
+ - [`taylorseer_text2image.py`](./taylorseer_text2image.py) demonstrates text to image generation with TaylorSeer caching optimization for improved performance. Flux and StableDiffusion3 models are supported.
  - [`heterogeneous_stable_diffusion.py`](./heterogeneous_stable_diffusion.py) shows how to assemble a heterogeneous text2image pipeline from individual subcomponents (scheduler, text encoder, unet, vae decoder)
  - [`image2image.py`](./image2image.py) demonstrates basic usage of the image to image pipeline
  - [`inpainting.py`](./inpainting.py) demonstrates basic usage of the inpainting pipeline
  - [`benchmark_image_gen.py`](./benchmark_image_gen.py) demonstrates how to benchmark the text to image / image to image / inpainting pipeline
+ - [`stable_diffusion_export_import.py`](./stable_diffusion_export_import.py) demonstrates how to export and import compiled models in the text to image pipeline. Only the Stable Diffusion XL model is supported.
 
 Users can change the sample code and play with the following generation parameters:
 
@@ -21,7 +23,7 @@ Users can change the sample code and play with the following generation paramete
 - Apply multiple different LoRA adapters and mix them with different blending coefficients
 - (Image to image and inpainting) Play with `strength` parameter to control how initial image is noised and reduce number of inference steps
 
-> [!NOTE]  
+> [!NOTE]
 > OpenVINO GenAI is written in C++ and uses `CppStdGenerator` random generator in Image Generation pipelines, while Diffusers library uses `torch.Generator` underhood.
 > To have the same results with HuggingFace, pass manually created `torch.Generator(device='cpu').manual_seed(seed)` to Diffusers generation pipelines and `openvino_genai.TorchGenerator(seed)` to OpenVINO GenAI pipelines as value for `generator` kwarg.
 
@@ -65,9 +67,9 @@ Prompt: `cyberpunk cityscape like Tokyo New York with tall buildings at dusk gol
 
    ![](./../../cpp/image_generation/512x512.bmp)
 
-### Run with callback
+### Run with threaded callback
 
-You can also add a callback to the `text2image.py` file to interrupt the image generation process earlier if you are satisfied with the intermediate result of the image generation or to add logs.
+You can also implement a callback function in `text2image.py` that runs in a separate thread. This allows for parallel processing, enabling you to interrupt generation early if intermediate results are satisfactory or to add logs.
 
 Please find the template of the callback usage below.
 
@@ -121,6 +123,26 @@ With adapter | Without adapter
 :---:|:---:
 ![](./../../cpp/image_generation/lora.bmp) | ![](./../../cpp/image_generation/baseline.bmp)
 
+## Run text to image with TaylorSeer caching optimization
+
+The `taylorseer_text2image.py` sample demonstrates how to use TaylorSeer Lite caching to accelerate text to image generation. TaylorSeer is a caching optimization technique that uses Taylor series approximation to predict intermediate outputs during diffusion inference, reducing the number of computationally expensive transformer forward passes.
+
+Run the sample with custom parameters:
+
+```bash
+python taylorseer_text2image.py ./flux.1-dev/FP16 "a beautiful sunset over mountains"
+```
+
+The sample generates two images with and without TaylorSeer config applied using the same prompt:
+   - `taylorseer.bmp` with TaylorSeer config applied
+   - `taylorseer_baseline.bmp` without TaylorSeer config applied
+
+Check the difference:
+
+With TaylorSeer | Without TaylorSeer
+:---:|:---:
+![](./../../cpp/image_generation/taylorseer.bmp) | ![](./../../cpp/image_generation/taylorseer_baseline.bmp)
+
 ## Run text to image with multiple devices
 
 The `heterogeneous_stable_diffusion.py` sample demonstrates how a Text2ImagePipeline object can be created from individual subcomponents - scheduler, text encoder, unet, & vae decoder. This approach gives fine-grained control over the devices used to execute each stage of the stable diffusion pipeline.
@@ -138,7 +160,7 @@ The sample will create a stable diffusion pipeline such that the text encoder is
 ## Run image to image pipeline
 
 The `image2mage.py` sample demonstrates basic image to image generation pipeline. The difference with text to image pipeline is that final image is denoised from initial image converted to latent space and noised with image noise according to `strength` parameter. `strength` should be in range of `[0., 1.]` where `1.` means initial image is fully noised and it is an equivalent to text to image generation.
-Also, `strength` parameter linearly affects a number of inferenece steps, because lower `strength` values means initial latent already has some structure and it requires less steps to denoise it. 
+Also, `strength` parameter linearly affects a number of inferenece steps, because lower `strength` values means initial latent already has some structure and it requires less steps to denoise it.
 
 To run the sample, download initial image first:
 
@@ -148,7 +170,7 @@ And then run the sample:
 
 `python image2image.py ./dreamlike_anime_1_0_ov/FP16 'cat wizard, gandalf, lord of the rings, detailed, fantasy, cute, adorable, Pixar, Disney, 8k' cat.png`
 
-The resuling image is:
+The resulting image is:
 
    ![](./../../cpp/image_generation/imageimage.bmp)
 
@@ -156,7 +178,7 @@ Note, that LoRA, heterogeneous execution and other features of `Text2ImagePipeli
 
 ## Run inpainting pipeline
 
-The `inpainting.py` sample demonstrates usage of inpainting pipeline, which can inpaint initial image by a given mask. Inpainting pipeline can work on typical text to image models as well as on specialized models which are oftenly named `space/model-inpainting`, e.g. `stabilityai/stable-diffusion-2-inpainting`. 
+The `inpainting.py` sample demonstrates usage of inpainting pipeline, which can inpaint initial image by a given mask. Inpainting pipeline can work on typical text to image models as well as on specialized models which are often named `space/model-inpainting`, e.g. `stabilityai/stable-diffusion-2-inpainting`.
 
 Such models can be converted in the same way as regular ones via `optimum-cli`:
 
@@ -172,7 +194,7 @@ And run the sample:
 
 `python inpainting.py ./stable-diffusion-2-inpainting 'Face of a yellow cat, high resolution, sitting on a park bench' image.png mask_image.png`
 
-The resuling image is:
+The resulting image is:
 
    ![](./../../cpp/image_generation/inpainting.bmp)
 
@@ -260,4 +282,17 @@ if image_path:
    image_tensor = img2img_pipe.generate(prompt, image, strength=0.8)
 else:
    image_tensor = text2img_pipe.generate(prompt, strength=1.0)
+```
+
+## Export and import compiled models
+
+`openvino_genai.Image2ImagePipeline` supports exporting and importing compiled models to and from a specified directory. This API can significantly reduce model load time, especially for large models like UNet. Only the Stable Diffusion XL model is supported.
+
+```python
+# export models
+pipeline = openvino_genai.Text2ImagePipeline(models_path, device)
+pipeline.export_model(models_path / "blobs")
+
+# import models
+imported_pipeline = openvino_genai.Text2ImagePipeline(models_path, device, blob_path=models_path / "blobs")
 ```

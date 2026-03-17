@@ -2,7 +2,6 @@ type VLMModelType = {
   architecture: string;
   models: Array<{
     name: string;
-    loraSupport: boolean;
     links: string[];
     notesLink?: string;
   }>;
@@ -14,7 +13,6 @@ export const VLM_MODELS: VLMModelType[] = [
     models: [
       {
         name: 'InternVLChatModel',
-        loraSupport: false,
         links: [
           'https://huggingface.co/OpenGVLab/InternVL2-1B',
           'https://huggingface.co/OpenGVLab/InternVL2-2B',
@@ -39,7 +37,6 @@ export const VLM_MODELS: VLMModelType[] = [
     models: [
       {
         name: 'LLaVA-v1.5',
-        loraSupport: false,
         links: ['https://huggingface.co/llava-hf/llava-1.5-7b-hf'],
       },
     ],
@@ -49,12 +46,11 @@ export const VLM_MODELS: VLMModelType[] = [
     models: [
       {
         name: 'nanoLLaVA',
-        loraSupport: false,
         links: ['https://huggingface.co/qnguyen3/nanoLLaVA'],
+        notesLink: '#nanollava-notes',
       },
       {
         name: 'nanoLLaVA-1.5',
-        loraSupport: false,
         links: ['https://huggingface.co/qnguyen3/nanoLLaVA-1.5'],
       },
     ],
@@ -64,7 +60,6 @@ export const VLM_MODELS: VLMModelType[] = [
     models: [
       {
         name: 'LLaVA-v1.6',
-        loraSupport: false,
         links: [
           'https://huggingface.co/llava-hf/llava-v1.6-mistral-7b-hf',
           'https://huggingface.co/llava-hf/llava-v1.6-vicuna-7b-hf',
@@ -74,11 +69,31 @@ export const VLM_MODELS: VLMModelType[] = [
     ],
   },
   {
+    architecture: 'LLaVA-NeXT-Video',
+    models: [
+      {
+        name: 'LLaVA-Next-Video',
+        links: [
+          'https://huggingface.co/llava-hf/LLaVA-NeXT-Video-7B-hf',
+        ],
+      },
+    ],
+  },
+  {
+    architecture: 'MiniCPMO',
+    models: [
+      {
+        name: 'MiniCPM-o-2_6',
+        links: ['https://huggingface.co/openbmb/MiniCPM-o-2_6'],
+        notesLink: '#minicpm-o-notes',
+      },
+    ],
+  },
+  {
     architecture: 'MiniCPMV',
     models: [
       {
         name: 'MiniCPM-V-2_6',
-        loraSupport: false,
         links: ['https://huggingface.co/openbmb/MiniCPM-V-2_6'],
       },
     ],
@@ -88,7 +103,6 @@ export const VLM_MODELS: VLMModelType[] = [
     models: [
       {
         name: 'phi3_v',
-        loraSupport: false,
         links: [
           'https://huggingface.co/microsoft/Phi-3-vision-128k-instruct',
           'https://huggingface.co/microsoft/Phi-3.5-vision-instruct',
@@ -102,7 +116,6 @@ export const VLM_MODELS: VLMModelType[] = [
     models: [
       {
         name: 'phi4mm',
-        loraSupport: false,
         links: [
           'https://huggingface.co/microsoft/Phi-4-multimodal-instruct',
         ],
@@ -115,7 +128,6 @@ export const VLM_MODELS: VLMModelType[] = [
     models: [
       {
         name: 'Qwen2-VL',
-        loraSupport: false,
         links: [
           'https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct',
           'https://huggingface.co/Qwen/Qwen2-VL-7B-Instruct',
@@ -130,7 +142,6 @@ export const VLM_MODELS: VLMModelType[] = [
     models: [
       {
         name: 'Qwen2.5-VL',
-        loraSupport: false,
         links: [
           'https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct',
           'https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct',
@@ -139,11 +150,29 @@ export const VLM_MODELS: VLMModelType[] = [
     ],
   },
   {
+    architecture: 'Qwen3-VL',
+    models: [
+      {
+        name: 'Qwen3-VL',
+        links: [
+          'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct',
+          'https://huggingface.co/Qwen/Qwen3-VL-2B-Thinking',
+          'https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct',
+          'https://huggingface.co/Qwen/Qwen3-VL-4B-Thinking',
+          'https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct',
+          'https://huggingface.co/Qwen/Qwen3-VL-8B-Thinking',
+          'https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct',
+          'https://huggingface.co/Qwen/Qwen3-VL-32B-Thinking',
+        ],
+        notesLink: '#qwen3_vl-notes',
+      },
+    ],
+  },
+  {
     architecture: 'Gemma3ForConditionalGeneration',
     models: [
       {
         name: 'gemma3',
-        loraSupport: false,
         links: [
           'https://huggingface.co/google/gemma-3-4b-it',
           'https://huggingface.co/google/gemma-3-12b-it',

@@ -1,12 +1,20 @@
-// Copyright (C) 2023-2025 Intel Corporation
+// Copyright (C) 2023-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
 #include <fstream>
 #include <iostream>
+#include <filesystem>
+#include <sstream>
+#include <vector>
+#include <iterator>
+#include <algorithm>
+
 #include <openvino/runtime/tensor.hpp>
 #include <string>
+
+#include "openvino/genai/tokenizer.hpp"
 
 template <typename T>
 void print_array(T* array, size_t size) {
@@ -23,7 +31,7 @@ void print_tensor(ov::Tensor tensor) {
     const size_t rank = shape.size();
     const auto* data = tensor.data<T>();
 
-    if (rank > 2) {
+    if (rank > 3) {
         print_array(data, tensor.get_size());
         return;
     }
@@ -35,10 +43,27 @@ void print_tensor(ov::Tensor tensor) {
     for (size_t batch = 0; batch < batch_size; ++batch) {
         std::cout << "  [ ";
         const size_t batch_offset = batch * seq_length;
-        for (size_t j = 0; j < seq_length; ++j) {
-            std::cout << data[batch_offset + j] << " ";
+
+        if (rank == 2) {
+            for (size_t j = 0; j < std::min(seq_length, size_t(10)); ++j) {
+                std::cout << data[batch_offset + j] << " ";
+            }
+            std::cout << "]\n";
+            continue;
         }
-        std::cout << "]\n";
+
+        const size_t hidden_size = shape[2];
+
+        for (size_t seq = 0; seq < seq_length; ++seq) {
+            if (seq != 0)
+                std::cout << "    ";
+            std::cout << "[ ";
+            const size_t seq_offset = (batch_offset + seq) * hidden_size;
+            for (size_t h = 0; h < std::min(hidden_size, size_t(10)); ++h) {
+                std::cout << data[seq_offset + h] << " ";
+            }
+            std::cout << "]\n";
+        }
     }
     std::cout << " ]" << std::endl;
 }
@@ -100,7 +125,7 @@ inline void read_tensor(const std::string& file_name, ov::Tensor tensor, bool as
 
 /// @brief Read an npy file created in Python:
 /// with open('ndarray.npy', 'wb') as file:
-///     np.save(file, ndarray)
+///     np.save(file, ndarray.ascontiguousarray())
 inline ov::Tensor from_npy(const std::filesystem::path& npy) {
     std::ifstream fstream{npy, std::ios::binary};
     fstream.seekg(0, std::ios_base::end);
@@ -171,6 +196,8 @@ inline ov::Tensor from_npy(const std::filesystem::path& npy) {
         tensor_type = ov::element::u8;
     } else if ("<i8" == type) {
         tensor_type = ov::element::i64;
+    } else if ("|b1" == type) {
+        tensor_type = ov::element::boolean;
     } else {
         OPENVINO_THROW("Not implemented dtype");
     }
@@ -179,4 +206,45 @@ inline ov::Tensor from_npy(const std::filesystem::path& npy) {
     fstream.read((char*)tensor.data(), _size);
     OPENVINO_ASSERT(fstream.gcount() == _size);
     return tensor;
+}
+
+inline std::string print_token_id(const std::vector<int64_t>& print_ids,
+                                  const std::string& prefix,
+                                  const size_t& last_num,
+                                  ov::genai::Tokenizer& tokenizer) {
+    std::stringstream ss;
+    ss << prefix << " = ";
+    size_t start_id = (print_ids.size() > last_num) ? (print_ids.size() - last_num) : 0;
+    for (size_t id = start_id; id < print_ids.size(); id++) {
+        ss << print_ids[id] << "[" << tokenizer.decode(std::vector<int64_t>{print_ids[id]}) << "],";
+    }
+    return ss.str();
+}
+
+inline float max_diff(const ov::Tensor& lhs, const ov::Tensor& rhs) {
+    OPENVINO_ASSERT(lhs.get_shape() == rhs.get_shape());
+    float max_diff = 0.0f;
+    for (size_t idx = 0; idx < lhs.get_size(); ++idx) {
+        OPENVINO_SUPPRESS_DEPRECATED_START
+        max_diff = std::max(
+            max_diff,
+            std::abs(lhs.data<const float>()[idx] - rhs.data<const float>()[idx])
+        );
+        OPENVINO_SUPPRESS_DEPRECATED_END
+    }
+    return max_diff;
+}
+
+#define print(x) std::cerr << #x << x << '\n';
+
+namespace std {
+inline ostream& operator<<(ostream& os, const vector<float>& floats) {
+    os << "<float>[" << floats.size();
+    if (floats.empty()) {
+        return os << ']';
+    }
+    os << "]: ";
+    copy(floats.begin(), floats.end(), ostream_iterator<float>(os, " "));
+    return os;
+}
 }

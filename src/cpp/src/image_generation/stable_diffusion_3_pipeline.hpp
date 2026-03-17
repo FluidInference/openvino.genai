@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2025 Intel Corporation
+// Copyright (C) 2023-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -6,6 +6,8 @@
 #include <cassert>
 
 #include "image_generation/diffusion_pipeline.hpp"
+#include "image_generation/threaded_callback.hpp"
+#include "diffusion_caching/taylorseer_lite.hpp"
 
 #include "openvino/genai/image_generation/clip_text_model.hpp"
 #include "openvino/genai/image_generation/clip_text_model_with_projection.hpp"
@@ -25,7 +27,7 @@ void padding_right(ov::Tensor src, ov::Tensor res) {
     OPENVINO_ASSERT(src_shape[0] == res_shape[0] && src_shape[1] == res_shape[1], "Tensors for padding_right must have the same dimensions");
 
     // since torch.nn.functional.pad can also perform trancation in case of negative pad size value
-    // we need to find minimal amoung src and res and respect it
+    // we need to find minimal among src and res and respect it
     size_t min_size = std::min(src_shape[2], res_shape[2]);
 
     const float* src_data = src.data<const float>();
@@ -38,7 +40,7 @@ void padding_right(ov::Tensor src, ov::Tensor res) {
 
             std::memcpy(res_data + offset_1, src_data + offset_2, min_size * sizeof(float));
             if (res_shape[2] > src_shape[2]) {
-                // peform actual padding if required
+                // perform actual padding if required
                 std::fill_n(res_data + offset_1 + src_shape[2], res_shape[2] - src_shape[2], 0.0f);
             }
         }
@@ -516,13 +518,6 @@ public:
         ImageGenerationConfig generation_config = m_generation_config;
         generation_config.update_generation_config(properties);
 
-        // Use callback if defined
-        std::function<bool(size_t, size_t, ov::Tensor&)> callback = nullptr;
-        auto callback_iter = properties.find(ov::genai::callback.name());
-        if (callback_iter != properties.end()) {
-            callback = callback_iter->second.as<std::function<bool(size_t, size_t, ov::Tensor&)>>();
-        }
-
         const auto& transformer_config = m_transformer->get_config();
         const size_t vae_scale_factor = m_vae->get_vae_scale_factor();
         const size_t batch_size_multiplier = do_classifier_free_guidance(generation_config.guidance_scale) ? 2 : 1;  // Transformer accepts 2x batch in case of CFG
@@ -535,6 +530,14 @@ public:
         check_inputs(generation_config, initial_image);
 
         set_lora_adapters(generation_config.adapters);
+
+        // Use callback if defined
+        std::shared_ptr<ThreadedCallbackWrapper> callback_ptr = nullptr;
+        auto callback_iter = properties.find(ov::genai::callback.name());
+        if (callback_iter != properties.end()) {
+            callback_ptr = std::make_shared<ThreadedCallbackWrapper>(callback_iter->second.as<std::function<bool(size_t, size_t, ov::Tensor&)>>());
+            callback_ptr->start();
+        }
 
         // 3. Prepare timesteps
         m_scheduler->set_timesteps(generation_config.num_inference_steps, generation_config.strength);
@@ -559,6 +562,9 @@ public:
         latent_shape_cfg[0] *= batch_size_multiplier;
         ov::Tensor latent_cfg(ov::element::f32, latent_shape_cfg);
 
+        // Initialize TaylorSeer if configured
+        TaylorSeerState ts_state(generation_config.taylorseer_config, timesteps.size());
+
         // 7. Denoising loop
         ov::Tensor noisy_residual_tensor(ov::element::f32, {});
 
@@ -573,10 +579,20 @@ public:
                 latent_cfg = latent;
             }
             ov::Tensor timestep(ov::element::f32, {1}, &timesteps[inference_step]);
-            auto infer_start = std::chrono::steady_clock::now();
-            ov::Tensor noise_pred_tensor = m_transformer->infer(latent_cfg, timestep);
-            auto infer_duration = ov::genai::PerfMetrics::get_microsec(std::chrono::steady_clock::now() - infer_start);
-            m_perf_metrics.raw_metrics.transformer_inference_durations.emplace_back(MicroSeconds(infer_duration));
+
+            ov::Tensor noise_pred_tensor;
+            // Use TaylorSeer if enabled and caching is appropriate
+            if (ts_state.is_active() && !ts_state.should_compute(inference_step)) {
+                noise_pred_tensor = ts_state.predict(inference_step);
+            } else {
+                auto infer_start = std::chrono::steady_clock::now();
+                noise_pred_tensor = m_transformer->infer(latent_cfg, timestep);
+                auto infer_duration = ov::genai::PerfMetrics::get_microsec(std::chrono::steady_clock::now() - infer_start);
+                m_perf_metrics.raw_metrics.transformer_inference_durations.emplace_back(MicroSeconds(infer_duration));
+                if (ts_state.is_active()) {
+                    ts_state.update(inference_step, noise_pred_tensor);
+                }
+            }
 
             ov::Shape noise_pred_shape = noise_pred_tensor.get_shape();
             noise_pred_shape[0] /= batch_size_multiplier;
@@ -604,7 +620,8 @@ public:
                 blend_latents(image_latent, noise, mask, latent, inference_step);
             }
 
-            if (callback && callback(inference_step, timesteps.size(), latent)) {
+            if (callback_ptr && callback_ptr->has_callback() && callback_ptr->write(inference_step, timesteps.size(), latent) == CallbackStatus::STOP) {
+                callback_ptr->end();
                 auto step_ms = ov::genai::PerfMetrics::get_microsec(std::chrono::steady_clock::now() - step_start);
                 m_perf_metrics.raw_metrics.iteration_durations.emplace_back(MicroSeconds(step_ms));
 
@@ -616,6 +633,10 @@ public:
             }
             auto step_ms = ov::genai::PerfMetrics::get_microsec(std::chrono::steady_clock::now() - step_start);
             m_perf_metrics.raw_metrics.iteration_durations.emplace_back(MicroSeconds(step_ms));
+        }
+
+        if (callback_ptr != nullptr) {
+            callback_ptr->end();
         }
         auto decode_start = std::chrono::steady_clock::now();
         auto image = decode(latent);
@@ -755,7 +776,7 @@ private:
             size_t height = initial_image_shape[1], width = initial_image_shape[2];
 
             OPENVINO_ASSERT(generation_config.strength >= 0.0f && generation_config.strength <= 1.0f,
-                "'Strength' generation parameter must be withion [0, 1] range");
+                "'Strength' generation parameter must be within [0, 1] range");
         } else {
             OPENVINO_ASSERT(generation_config.strength == 1.0f, "'Strength' generation parameter must be 1.0f for Text 2 image pipeline");
             OPENVINO_ASSERT(!initial_image, "Internal error: initial_image must be empty for Text 2 image pipeline");

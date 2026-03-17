@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2025 Intel Corporation
+// Copyright (C) 2023-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -46,6 +46,20 @@ public:
         m_request.infer();
 
         return m_request.get_output_tensor();
+    }
+
+    virtual void export_model(const std::filesystem::path& blob_path) override {
+        OPENVINO_ASSERT(m_request, "UNet model must be compiled first");
+        auto compiled_model = m_request.get_compiled_model();
+        utils::export_model(compiled_model, blob_path / "openvino_model.blob");
+    }
+
+    virtual void import_model(const std::filesystem::path& blob_path,
+                              const std::string& device,
+                              const ov::AnyMap& properties) override {
+        auto compiled_model = utils::import_model(blob_path / "openvino_model.blob", device, properties);
+        ov::genai::utils::print_compiled_model_properties(compiled_model, "UNet 2D Condition dynamic model");
+        m_request = compiled_model.create_infer_request();
     }
 
 private:

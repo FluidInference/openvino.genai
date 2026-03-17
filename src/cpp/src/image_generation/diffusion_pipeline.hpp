@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2025 Intel Corporation
+// Copyright (C) 2023-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -129,6 +129,10 @@ public:
     void save_load_time(std::chrono::steady_clock::time_point start_time) {
         auto stop_time = std::chrono::steady_clock::now();
         m_load_time_ms += std::chrono::duration_cast<std::chrono::milliseconds>(stop_time - start_time).count();
+    }
+
+    virtual void export_model(const std::filesystem::path& export_dir) {
+        OPENVINO_THROW("Export model is not implemented for this pipeline");
     }
 
     virtual ~DiffusionPipeline() = default;

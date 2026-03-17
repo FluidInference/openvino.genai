@@ -42,6 +42,8 @@ Attributes:
         Instruction to use for embedding a query.
     embed_instruction (str, optional):
         Instruction to use for embedding a document.
+    padding_side (str, optional):
+        Side to use for padding "left" or "right"
 )";
 
 const auto text_reranking_config_docstring = R"(
@@ -51,6 +53,10 @@ Attributes:
         Number of documents to return sorted by score.
     max_length (int, optional):
         Maximum length of tokens passed to the embedding model.
+    pad_to_max_length (bool, optional):
+        If 'True', model input tensors are padded to the maximum length.
+    padding_side (str, optional):
+        Side to use for padding "left" or "right"
 )";
 
 }  // namespace
@@ -128,7 +134,8 @@ void init_rag_pipelines(py::module_& m) {
 
     py::enum_<TextEmbeddingPipeline::PoolingType>(text_embedding_pipeline, "PoolingType")
         .value("CLS", TextEmbeddingPipeline::PoolingType::CLS, "First token embeddings")
-        .value("MEAN", TextEmbeddingPipeline::PoolingType::MEAN, "The average of all token embeddings");
+        .value("MEAN", TextEmbeddingPipeline::PoolingType::MEAN, "The average of all token embeddings")
+        .value("LAST_TOKEN", TextEmbeddingPipeline::PoolingType::LAST_TOKEN, "Last token embeddings");
 
     py::class_<TextEmbeddingPipeline::Config>(text_embedding_pipeline, "Config", text_embedding_config_docstring)
         .def(py::init<>())
@@ -144,7 +151,8 @@ void init_rag_pipelines(py::module_& m) {
         .def_readwrite("pooling_type", &TextEmbeddingPipeline::Config::pooling_type)
         .def_readwrite("normalize", &TextEmbeddingPipeline::Config::normalize)
         .def_readwrite("query_instruction", &TextEmbeddingPipeline::Config::query_instruction)
-        .def_readwrite("embed_instruction", &TextEmbeddingPipeline::Config::embed_instruction);
+        .def_readwrite("embed_instruction", &TextEmbeddingPipeline::Config::embed_instruction)
+        .def_readwrite("padding_side", &TextEmbeddingPipeline::Config::padding_side);
 
     text_embedding_pipeline.def(
         py::init([](const std::filesystem::path& models_path,
@@ -222,7 +230,9 @@ kwargs: Plugin and/or config properties
             return ov::genai::TextRerankPipeline::Config(pyutils::kwargs_to_any_map(kwargs));
         }))
         .def_readwrite("top_n", &ov::genai::TextRerankPipeline::Config::top_n)
-        .def_readwrite("max_length", &ov::genai::TextRerankPipeline::Config::max_length);
+        .def_readwrite("max_length", &ov::genai::TextRerankPipeline::Config::max_length)
+        .def_readwrite("pad_to_max_length", &ov::genai::TextRerankPipeline::Config::pad_to_max_length)
+        .def_readwrite("padding_side", &ov::genai::TextRerankPipeline::Config::padding_side);
 
     text_rerank_pipeline.def(
         py::init([](const std::filesystem::path& models_path,
